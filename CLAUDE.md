@@ -130,7 +130,11 @@ full GDPR-håndtering · lønnsintegrasjon.
 - [x] Fase 1 – Kravspesifikasjon (ferdig)
 - [x] Fase 2 – Design og arkitektur (ferdig)
 - [x] M0 – Sette opp Next.js + Supabase + Vercel (ferdig: app deployet på Vercel, tilkoblet Supabase i EU-region)
-- [ ] M1–M5 – Bygge MVP
+- [x] M1 – Innlogging + masterdata (ferdig: Supabase Auth + RLS, enhet/biler/sjåfører)
+- [ ] M2 – Rutemaster + generere vakter (← neste)
+- [ ] M3 – Stempling + bilsjekk (mobil)
+- [ ] M4 – Dagsoversikt med fargestatus
+- [ ] M5 – Kontroll + lukke dag → MVP ferdig
 
 *Oppdater denne listen etter hvert som milepæler fullføres.*
 
