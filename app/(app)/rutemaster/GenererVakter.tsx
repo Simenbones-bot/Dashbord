@@ -1,11 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { genererVakter } from "./actions";
 
 export default function GenererVakter() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const offset = Math.trunc(Number(searchParams.get("uke") ?? 0)) || 0;
   const [laster, setLaster] = useState(false);
   const [melding, setMelding] = useState<string | null>(null);
   const [feil, setFeil] = useState<string | null>(null);
@@ -15,7 +17,7 @@ export default function GenererVakter() {
     setMelding(null);
     setFeil(null);
 
-    const res = await genererVakter();
+    const res = await genererVakter(offset);
 
     setLaster(false);
     if (!res.ok) {
@@ -42,7 +44,7 @@ export default function GenererVakter() {
           color: "var(--bring-green)",
         }}
       >
-        {laster ? "Genererer …" : "Generer vakter (1 uke)"}
+        {laster ? "Genererer …" : "Generer vakter for uken"}
       </button>
       {melding && (
         <span className="text-sm" style={{ color: "var(--bring-green-mid)" }}>

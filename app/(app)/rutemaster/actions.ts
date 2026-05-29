@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { kommendeDatoer } from "./dates";
+import { ukeData, kjoresPaaDato } from "./dates";
 
 function tekstEllerNull(v: FormDataEntryValue | null): string | null {
   const s = String(v ?? "").trim();
@@ -75,11 +75,12 @@ export type GenererResultat =
   | { ok: false; feil: string };
 
 /**
- * Lager vakter 1 uke frem (i dag + 6 dager) for alle aktive ruter i brukerens enhet.
- * En rute kjøres dag nr. i hvis i (0 = i dag) går opp i rutens intervall.
+ * Lager vakter for hele uken (mandag–søndag) som ligger `offset` uker fra
+ * denne uken, for alle aktive ruter i brukerens enhet.
+ * En rute kjøres på datoer som passer rutens intervall (se kjoresPaaDato).
  * Trygt å kjøre flere ganger – doble vakter hoppes over (unik rute+dato).
  */
-export async function genererVakter(): Promise<GenererResultat> {
+export async function genererVakter(offset: number = 0): Promise<GenererResultat> {
   const supabase = await createClient();
 
   const {
@@ -107,7 +108,7 @@ export async function genererVakter(): Promise<GenererResultat> {
     return { ok: false, feil: "Ingen aktive ruter å generere vakter fra." };
   }
 
-  const datoer = kommendeDatoer(7);
+  const datoer = ukeData(Math.trunc(offset) || 0).datoer;
 
   // Bygg datetime-streng (lokal tid) fra dato + klokkeslett, ellers null.
   const stempel = (dato: string, tid: string | null) =>
@@ -125,10 +126,9 @@ export async function genererVakter(): Promise<GenererResultat> {
   };
 
   const rader: NyVakt[] = [];
-  datoer.forEach((dato, i) => {
+  datoer.forEach((dato) => {
     for (const r of ruter) {
-      const intervall = r.interval_days && r.interval_days > 0 ? r.interval_days : 1;
-      if (i % intervall !== 0) continue;
+      if (!kjoresPaaDato(dato, r.interval_days)) continue;
       rader.push({
         unit_id: profile.unit_id,
         route_id: r.id,
