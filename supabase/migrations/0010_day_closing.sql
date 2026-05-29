@@ -1,74 +1,51 @@
 -- =============================================================
 -- 0010_day_closing.sql
--- M5: Dagskontroll (lukke dag) + revisjonslogg.
--- Lederen kontrollerer planlagt vs. faktisk og "lukker" dagen for en enhet.
--- Hver lukking/gjenaapning logges (hvem/naar) i day_closing_log.
--- Bygger paa 0001 (can_access_unit, profile, unit).
+-- M5: Kontroll av dagen. Lederen godkjenner eller avviser HVER vakt
+-- (planlagt vs. faktisk). Hver vurdering lagrer hvem/naar = revisjonslogg.
+-- Bygger paa 0001 (can_access_unit, profile, unit) og 0003 (shift).
 -- Trygt aa kjore flere ganger (if not exists / drop policy if exists).
 -- =============================================================
 
--- ---------- 1. TABELLER ----------
+-- ---------- 1. TABELL ----------
 
--- Dagskontroll: én rad pr. enhet pr. dato. Finnes raden, er dagen "lukket"
--- (med mindre status er satt tilbake til 'apen' ved gjenaapning).
-create table if not exists public.day_closing (
+-- Vurdering pr. vakt: én rad pr. shift. status godkjent/avvist, med valgfri
+-- begrunnelse. reviewed_by/reviewed_at + reviewed_by_name er revisjonsloggen
+-- (hvem gjorde hva og naar). Navnet lagres som tekst slik at loggen bestaar
+-- selv om en bruker senere fjernes.
+create table if not exists public.shift_review (
   id uuid primary key default gen_random_uuid(),
   unit_id uuid not null references public.unit(id) on delete restrict,
-  date date not null,
-  status text not null default 'lukket'
-    check (status in ('apen', 'lukket')),
-  -- Hvem lukket og naar (vises i kontrollskjermen).
-  closed_by uuid references public.profile(id) on delete set null,
-  closed_by_name text,
-  closed_at timestamptz,
-  -- Valgfri kommentar fra lederen ved lukking.
+  shift_id uuid not null references public.shift(id) on delete cascade,
+  status text not null check (status in ('godkjent', 'avvist')),
   note text,
+  reviewed_by uuid references public.profile(id) on delete set null,
+  reviewed_by_name text,
+  reviewed_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
-  -- Maks én kontroll-rad pr. enhet pr. dag (gjor lukking trygt aa kjore igjen).
-  unique (unit_id, date)
+  -- Maks én vurdering pr. vakt (gjor lagring/oppdatering trygt aa kjore igjen).
+  unique (shift_id)
 );
 
--- Revisjonslogg: én rad pr. handling (lukket/gjenaapnet). Skrives aldri over
--- eller slettes (ingen update/delete-policy) -> ekte historikk.
-create table if not exists public.day_closing_log (
-  id uuid primary key default gen_random_uuid(),
-  unit_id uuid not null references public.unit(id) on delete restrict,
-  date date not null,
-  action text not null check (action in ('lukket', 'gjenapnet')),
-  actor_id uuid references public.profile(id) on delete set null,
-  actor_name text,
-  created_at timestamptz not null default now()
-);
-
-create index if not exists day_closing_unit_date_idx
-  on public.day_closing(unit_id, date);
-create index if not exists day_closing_log_unit_date_idx
-  on public.day_closing_log(unit_id, date);
+create index if not exists shift_review_unit_idx  on public.shift_review(unit_id);
+create index if not exists shift_review_shift_idx on public.shift_review(shift_id);
 
 -- ---------- 2. SKRU PAA ROW LEVEL SECURITY ----------
 
-alter table public.day_closing     enable row level security;
-alter table public.day_closing_log enable row level security;
+alter table public.shift_review enable row level security;
 
 -- ---------- 3. TILGANGSREGLER (POLICIES) ----------
 -- Samme moenster som de andre tabellene: full tilgang innen egne enheter.
 
--- Dagskontroll: les/opprett/endre innen egne enheter.
-drop policy if exists day_closing_select on public.day_closing;
-create policy day_closing_select on public.day_closing
+drop policy if exists shift_review_select on public.shift_review;
+create policy shift_review_select on public.shift_review
   for select using (public.can_access_unit(unit_id));
-drop policy if exists day_closing_insert on public.day_closing;
-create policy day_closing_insert on public.day_closing
+drop policy if exists shift_review_insert on public.shift_review;
+create policy shift_review_insert on public.shift_review
   for insert with check (public.can_access_unit(unit_id));
-drop policy if exists day_closing_update on public.day_closing;
-create policy day_closing_update on public.day_closing
+drop policy if exists shift_review_update on public.shift_review;
+create policy shift_review_update on public.shift_review
   for update using (public.can_access_unit(unit_id))
   with check (public.can_access_unit(unit_id));
-
--- Revisjonslogg: kan leses og legges til, men ikke endres/slettes (audit).
-drop policy if exists day_closing_log_select on public.day_closing_log;
-create policy day_closing_log_select on public.day_closing_log
-  for select using (public.can_access_unit(unit_id));
-drop policy if exists day_closing_log_insert on public.day_closing_log;
-create policy day_closing_log_insert on public.day_closing_log
-  for insert with check (public.can_access_unit(unit_id));
+drop policy if exists shift_review_delete on public.shift_review;
+create policy shift_review_delete on public.shift_review
+  for delete using (public.can_access_unit(unit_id));
