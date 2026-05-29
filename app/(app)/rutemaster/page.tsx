@@ -1,5 +1,15 @@
 import { createClient } from "@/lib/supabase/server";
 import NyRute from "./NyRute";
+import GenererVakter from "./GenererVakter";
+import { kommendeDatoer } from "./dates";
+
+type Shift = {
+  id: string;
+  route_id: string;
+  date: string;
+  driver_id: string | null;
+  status: string;
+};
 
 type Route = {
   id: string;
@@ -23,21 +33,48 @@ const kl = (t: string | null) => (t ? t.slice(0, 5) : null);
 const intervallTekst = (n: number) =>
   n === 1 ? "Hver dag" : `Hver ${n}. dag`;
 
+// "2026-05-30" → { ukedag: "fre", dag: "30.05." }
+function dagLabel(dato: string) {
+  const d = new Date(`${dato}T12:00:00Z`);
+  const ukedag = new Intl.DateTimeFormat("nb-NO", {
+    weekday: "short",
+    timeZone: "Europe/Oslo",
+  }).format(d);
+  const dag = new Intl.DateTimeFormat("nb-NO", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: "Europe/Oslo",
+  }).format(d);
+  return { ukedag, dag };
+}
+
 export default async function RutemasterPage() {
   const supabase = await createClient();
 
-  // Hent ruter + listene vi trenger for å vise navn og fylle skjemaet.
-  const [ruterRes, kunderRes, bilerRes, sjaforerRes] = await Promise.all([
-    supabase
-      .from("route")
-      .select(
-        "id, name, route_number, customer_id, vehicle_id, driver_id, co_driver_id, start_time, end_time, distance_km, interval_days, revenue_per_hour, active",
-      )
-      .order("created_at", { ascending: false }),
-    supabase.from("customer").select("id, name").order("name"),
-    supabase.from("vehicle").select("id, reg_number, make, model").order("reg_number"),
-    supabase.from("driver").select("id, full_name").order("full_name"),
-  ]);
+  const datoer = kommendeDatoer(7);
+
+  // Hent ruter + vakter for uken + listene vi trenger for navn og skjema.
+  const [ruterRes, kunderRes, bilerRes, sjaforerRes, vakterRes] =
+    await Promise.all([
+      supabase
+        .from("route")
+        .select(
+          "id, name, route_number, customer_id, vehicle_id, driver_id, co_driver_id, start_time, end_time, distance_km, interval_days, revenue_per_hour, active",
+        )
+        .order("created_at", { ascending: false }),
+      supabase.from("customer").select("id, name").order("name"),
+      supabase
+        .from("vehicle")
+        .select("id, reg_number, make, model")
+        .order("reg_number"),
+      supabase.from("driver").select("id, full_name").order("full_name"),
+      supabase
+        .from("shift")
+        .select("id, route_id, date, driver_id, status")
+        .gte("date", datoer[0])
+        .lte("date", datoer[datoer.length - 1])
+        .order("date"),
+    ]);
 
   const ruter = (ruterRes.data ?? []) as Route[];
   const error = ruterRes.error;
@@ -70,9 +107,27 @@ export default async function RutemasterPage() {
     navn: s.full_name as string,
   }));
 
+  // Oppslag for ukesvisningen: rutenavn og rutetid pr. rute-id.
+  const routeNavn = new Map(ruter.map((r) => [r.id, r.name]));
+  const routeTid = new Map(
+    ruter.map((r) => {
+      const s = kl(r.start_time);
+      const e = kl(r.end_time);
+      return [r.id, s || e ? `${s ?? "?"}–${e ?? "?"}` : null] as const;
+    }),
+  );
+
+  // Grupper vaktene pr. dato.
+  const vakter = (vakterRes.data ?? []) as Shift[];
+  const vakterPerDato = new Map<string, Shift[]>(datoer.map((d) => [d, []]));
+  for (const v of vakter) {
+    vakterPerDato.get(v.date)?.push(v);
+  }
+
   const stats = [
     { label: "Ruter totalt", verdi: ruter.length },
     { label: "Aktive", verdi: ruter.filter((r) => r.active).length },
+    { label: "Vakter denne uken", verdi: vakter.length },
   ];
 
   return (
@@ -95,7 +150,7 @@ export default async function RutemasterPage() {
         <NyRute kunder={kundeValg} biler={bilValg} sjaforer={sjaforValg} />
       </div>
 
-      <div className="mt-6 grid grid-cols-2 gap-3">
+      <div className="mt-6 grid grid-cols-3 gap-3">
         {stats.map((s) => (
           <div
             key={s.label}
@@ -120,6 +175,74 @@ export default async function RutemasterPage() {
           Kunne ikke hente ruter: {error.message}
         </p>
       )}
+
+      {/* ---------- Ukesvisning (vakter) ---------- */}
+      <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-lg font-medium tracking-tight">Denne uken</h2>
+        <GenererVakter />
+      </div>
+
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+        {datoer.map((dato) => {
+          const { ukedag, dag } = dagLabel(dato);
+          const dagensVakter = vakterPerDato.get(dato) ?? [];
+          return (
+            <div
+              key={dato}
+              className="rounded-2xl p-3 shadow-sm"
+              style={{ backgroundColor: "var(--surface)" }}
+            >
+              <div className="mb-2 flex items-baseline justify-between">
+                <span
+                  className="text-[13px] font-semibold capitalize"
+                  style={{ color: "var(--foreground)" }}
+                >
+                  {ukedag}
+                </span>
+                <span
+                  className="text-[12px]"
+                  style={{ color: "var(--text-tertiary)" }}
+                >
+                  {dag}
+                </span>
+              </div>
+              {dagensVakter.length === 0 ? (
+                <p
+                  className="py-2 text-[12.5px]"
+                  style={{ color: "var(--text-tertiary)" }}
+                >
+                  Ingen vakter
+                </p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {dagensVakter.map((v) => (
+                    <li
+                      key={v.id}
+                      className="rounded-[8px] px-2.5 py-1.5"
+                      style={{ backgroundColor: "var(--background)" }}
+                    >
+                      <div className="text-[13px] font-medium">
+                        {routeNavn.get(v.route_id) ?? "Rute"}
+                      </div>
+                      <div
+                        className="text-[11.5px]"
+                        style={{ color: "var(--text-tertiary)" }}
+                      >
+                        {routeTid.get(v.route_id) ?? "–"}
+                        {v.driver_id && sjaforNavn.get(v.driver_id)
+                          ? ` · ${sjaforNavn.get(v.driver_id)}`
+                          : ""}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <h2 className="mt-8 text-lg font-medium tracking-tight">Alle ruter</h2>
 
       <div
         className="mt-6 overflow-hidden rounded-2xl shadow-sm"
