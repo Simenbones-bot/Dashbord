@@ -67,22 +67,54 @@ export default async function StemplePage({
 
   const vaktIder = (vakter ?? []).map((v) => v.id);
 
-  const [ruterRes, kunderRes, sjaforerRes, stemplingerRes] = await Promise.all([
-    admin.from("route").select("id, name, route_number, customer_id"),
-    admin.from("customer").select("id, name"),
-    admin
-      .from("driver")
-      .select("id, full_name")
-      .eq("unit_id", bil.unit_id)
-      .eq("status", "aktiv")
-      .order("full_name"),
-    vaktIder.length
-      ? admin
-          .from("time_entry")
-          .select("shift_id, driver_id, check_in, check_out, comment")
-          .in("shift_id", vaktIder)
-      : Promise.resolve({ data: [] as never[] }),
-  ]);
+  const [ruterRes, kunderRes, sjaforerRes, stemplingerRes, sjekkerRes] =
+    await Promise.all([
+      admin.from("route").select("id, name, route_number, customer_id"),
+      admin.from("customer").select("id, name"),
+      admin
+        .from("driver")
+        .select("id, full_name")
+        .eq("unit_id", bil.unit_id)
+        .eq("status", "aktiv")
+        .order("full_name"),
+      vaktIder.length
+        ? admin
+            .from("time_entry")
+            .select("shift_id, driver_id, check_in, check_out, comment")
+            .in("shift_id", vaktIder)
+        : Promise.resolve({ data: [] as never[] }),
+      vaktIder.length
+        ? admin
+            .from("vehicle_check")
+            .select("id, shift_id, status, created_at")
+            .in("shift_id", vaktIder)
+            .order("created_at", { ascending: false })
+        : Promise.resolve({ data: [] as never[] }),
+    ]);
+
+  // Nyeste bilsjekk pr. vakt (forste rad pr. shift_id, sortert synkende over).
+  const sjekkFor = new Map<string, { id: string; status: "ok" | "avvik" }>();
+  for (const s of sjekkerRes.data ?? []) {
+    if (!sjekkFor.has(s.shift_id)) {
+      sjekkFor.set(s.shift_id, { id: s.id, status: s.status as "ok" | "avvik" });
+    }
+  }
+
+  // Tell bilder pr. bilsjekk.
+  const sjekkIder = [...sjekkFor.values()].map((s) => s.id);
+  const bildeAntall = new Map<string, number>();
+  if (sjekkIder.length) {
+    const { data: bilderData } = await admin
+      .from("photo")
+      .select("vehicle_check_id")
+      .in("vehicle_check_id", sjekkIder);
+    for (const p of bilderData ?? []) {
+      bildeAntall.set(
+        p.vehicle_check_id,
+        (bildeAntall.get(p.vehicle_check_id) ?? 0) + 1,
+      );
+    }
+  }
 
   const ruteInfo = new Map(
     (ruterRes.data ?? []).map((r) => [
@@ -106,6 +138,7 @@ export default async function StemplePage({
     const r = ruteInfo.get(v.route_id);
     const kunde = r?.kundeId ? kundeNavn.get(r.kundeId) ?? null : null;
     const t = stemplingFor.get(v.id);
+    const sjekk = sjekkFor.get(v.id);
     const planlagt =
       klokke(v.planned_start) || klokke(v.planned_end)
         ? `${klokke(v.planned_start) ?? "?"}–${klokke(v.planned_end) ?? "?"}`
@@ -120,6 +153,8 @@ export default async function StemplePage({
       sjaforId: t?.driver_id ?? null,
       sjaforNavn: t?.driver_id ? sjaforNavn.get(t.driver_id) ?? null : null,
       kommentar: t?.comment ?? null,
+      sjekkStatus: sjekk?.status ?? null,
+      antallBilder: sjekk ? bildeAntall.get(sjekk.id) ?? 0 : 0,
     };
   });
 
