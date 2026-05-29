@@ -1,26 +1,39 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* App-flater */
+  --background: #f4f4f2;
+  --foreground: #111110;
+
+  /* Bring-merkefarger (fra designpakken) */
+  --bring-green: #003d24; /* primaer: knapper, titler */
+  --bring-green-mid: #00643a; /* "i rute"/suksess */
+  --bring-green-light: #56b529; /* aksent/merkestripe */
+  --bring-mint: #b5e099; /* lys aksent */
+  --green-soft: #e5f1e9; /* aktiv nav-bg, suksess-soft */
+
+  /* Tekst */
+  --text-secondary: #4a4a48;
+  --text-tertiary: #8a8780;
+
+  /* Flater og kantlinjer */
+  --surface: #ffffff;
+  --border: #eceae5;
+  --border-input: #d9d6d0;
+
+  /* Status */
+  --danger: #c7261b;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-sans: var(--font-dm-sans);
+  --font-mono: var(--font-dm-mono);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-dm-sans), Arial, Helvetica, sans-serif;
 }
