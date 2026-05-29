@@ -35,7 +35,7 @@ export default async function AppLayout({
   const unit = Array.isArray(unitRel) ? (unitRel[0] ?? null) : (unitRel ?? null);
 
   return (
-    <div className="flex min-h-screen flex-1">
+    <div className="flex min-h-screen flex-1 flex-col md:flex-row">
       <Sidebar
         unitName={unit?.name ?? "Ingen enhet"}
         unitCode={unit?.code ?? "—"}
