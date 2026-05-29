@@ -25,17 +25,16 @@ const UKEDAGER: { nr: number; kort: string }[] = [
 export default function NyRute({
   kunder,
   biler,
-  sjaforer,
 }: {
   kunder: Valg[];
   biler: Valg[];
-  sjaforer: Valg[];
 }) {
   const router = useRouter();
   const [apen, setApen] = useState(false);
   const [laster, setLaster] = useState(false);
   const [feil, setFeil] = useState<string | null>(null);
   const [dager, setDager] = useState<number[]>([1, 2, 3, 4, 5]); // man–fre
+  const [sidemann, setSidemann] = useState(false);
 
   function veksleDag(nr: number) {
     setDager((d) =>
@@ -47,6 +46,7 @@ export default function NyRute({
     setApen(false);
     setFeil(null);
     setDager([1, 2, 3, 4, 5]);
+    setSidemann(false);
   }
 
   async function lagre(e: React.FormEvent<HTMLFormElement>) {
@@ -136,14 +136,40 @@ export default function NyRute({
                 <Felt label="Bil">
                   <Velg navn="vehicle_id" valg={biler} />
                 </Felt>
-                <Felt label="Sjåfør">
-                  <Velg navn="driver_id" valg={sjaforer} />
+                <Felt label="Sidemann?">
+                  <div className="flex gap-1.5">
+                    {[
+                      { v: false, t: "Nei" },
+                      { v: true, t: "Ja" },
+                    ].map((o) => {
+                      const valgt = sidemann === o.v;
+                      return (
+                        <button
+                          key={o.t}
+                          type="button"
+                          onClick={() => setSidemann(o.v)}
+                          className="flex-1 rounded-[8px] px-3 py-2.5 text-[14px] font-medium"
+                          style={
+                            valgt
+                              ? { backgroundColor: "var(--bring-green)", color: "#fff" }
+                              : {
+                                  border: "1.5px solid var(--border-input)",
+                                  color: "var(--text-secondary)",
+                                }
+                          }
+                        >
+                          {o.t}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <input
+                    type="hidden"
+                    name="has_co_driver"
+                    value={sidemann ? "true" : "false"}
+                  />
                 </Felt>
               </div>
-
-              <Felt label="Sidemann (valgfritt)">
-                <Velg navn="co_driver_id" valg={sjaforer} />
-              </Felt>
 
               <div className="grid grid-cols-2 gap-3">
                 <Felt label="Starttid">

@@ -8,8 +8,7 @@ type Route = {
   route_number: string | null;
   customer_id: string | null;
   vehicle_id: string | null;
-  driver_id: string | null;
-  co_driver_id: string | null;
+  has_co_driver: boolean;
   start_time: string | null;
   end_time: string | null;
   distance_km: number | null;
@@ -40,37 +39,37 @@ const DAG_KORT: Record<number, string> = {
 
 // Postgres "time" kommer som "HH:MM:SS" – vis bare timer og minutter.
 const kl = (t: string | null) => (t ? t.slice(0, 5) : null);
+// "06:30:00" → 6.5 (desimaltime), ellers null.
+const timer = (t: string | null) =>
+  t ? Number(t.slice(0, 2)) + Number(t.slice(3, 5)) / 60 : null;
 
 const GRID_KOLONNER = "180px repeat(7, minmax(0, 1fr))";
+const LANE_H = 38; // høyde pr. rute-stolpe
+const pad = (n: number) => String(n).padStart(2, "0");
 
 export default async function RutemasterPage() {
   const supabase = await createClient();
 
-  const [ruterRes, kunderRes, bilerRes, sjaforerRes] = await Promise.all([
+  const [ruterRes, kunderRes, bilerRes] = await Promise.all([
     supabase
       .from("route")
       .select(
-        "id, name, route_number, customer_id, vehicle_id, driver_id, co_driver_id, start_time, end_time, distance_km, weekdays, revenue_per_hour, active",
+        "id, name, route_number, customer_id, vehicle_id, has_co_driver, start_time, end_time, distance_km, weekdays, revenue_per_hour, active",
       )
       .order("created_at", { ascending: false }),
     supabase.from("customer").select("id, name").order("name"),
     supabase.from("vehicle").select("id, reg_number, make, model").order("reg_number"),
-    supabase.from("driver").select("id, full_name").order("full_name"),
   ]);
 
   const ruter = (ruterRes.data ?? []) as Route[];
   const biler = bilerRes.data ?? [];
   const error = ruterRes.error;
 
-  // Bare aktive ruter inngår i ukesmalen.
   const aktiveRuter = ruter.filter((r) => r.active);
 
   // ---------- Oppslag ----------
   const kundeNavn = new Map(
     (kunderRes.data ?? []).map((k) => [k.id, k.name as string]),
-  );
-  const sjaforNavn = new Map(
-    (sjaforerRes.data ?? []).map((s) => [s.id, s.full_name as string]),
   );
   const bilNavn = new Map(
     biler.map((b) => [b.id, `${b.reg_number} (${b.make} ${b.model})`]),
@@ -80,64 +79,52 @@ export default async function RutemasterPage() {
   const fargeFor = (kundeId: string | null | undefined): Farge =>
     (kundeId && farger.get(kundeId)) || NOYTRAL;
 
-  // ---------- Bygg rader (pr. bil) ----------
-  // Nøkkel "bilId|ukedag" → ruter. Ruter uten bil samles under "UTEN".
+  // ---------- Rutene pr. bil + ukedag ----------
   const perBilDag = new Map<string, Route[]>();
-  const bilerMedRute = new Set<string>();
-  const bilSjafor = new Map<string, string>();
   let harUtenBil = false;
-
   for (const r of aktiveRuter) {
     const bilNokkel = r.vehicle_id ?? "UTEN";
-    if (r.vehicle_id) bilerMedRute.add(r.vehicle_id);
-    else harUtenBil = true;
-    if (r.vehicle_id && r.driver_id && !bilSjafor.has(r.vehicle_id)) {
-      bilSjafor.set(r.vehicle_id, r.driver_id);
-    }
+    if (!r.vehicle_id) harUtenBil = true;
     for (const dag of r.weekdays ?? []) {
       const k = `${bilNokkel}|${dag}`;
       (perBilDag.get(k) ?? perBilDag.set(k, []).get(k)!).push(r);
     }
   }
 
-  type Rad = {
-    id: string;
-    tittel: string;
-    undertittel: string;
-    sjaforNavn: string | null;
-  };
-  const rader: Rad[] = biler
-    .filter((b) => bilerMedRute.has(b.id))
-    .map((b) => ({
-      id: b.id,
-      tittel: b.reg_number,
-      undertittel: `${b.make} ${b.model}`,
-      sjaforNavn: bilSjafor.has(b.id)
-        ? sjaforNavn.get(bilSjafor.get(b.id)!) ?? null
-        : null,
-    }));
+  // Rader: ALLE biler på enheten (også uten oppdrag) + evt. "Uten bil".
+  type Rad = { id: string; tittel: string; undertittel: string };
+  const rader: Rad[] = biler.map((b) => ({
+    id: b.id,
+    tittel: b.reg_number,
+    undertittel: `${b.make} ${b.model}`,
+  }));
   if (harUtenBil) {
-    rader.push({
-      id: "UTEN",
-      tittel: "Uten bil",
-      undertittel: "Ikke tildelt",
-      sjaforNavn: null,
-    });
+    rader.push({ id: "UTEN", tittel: "Uten bil", undertittel: "Ikke tildelt" });
   }
 
-  // Arbeidsvindu: tidligste start- og seneste sluttime blant de aktive rutene.
+  // ---------- Tidsskala (arbeidsvindu) ----------
   let minStart = 24;
   let maxSlutt = 0;
   for (const r of aktiveRuter) {
-    if (r.start_time) minStart = Math.min(minStart, Number(r.start_time.slice(0, 2)));
-    if (r.end_time) {
-      const h = Number(r.end_time.slice(0, 2)) + (Number(r.end_time.slice(3, 5)) > 0 ? 1 : 0);
-      maxSlutt = Math.max(maxSlutt, h);
-    }
+    if (r.start_time) minStart = Math.min(minStart, Math.floor(timer(r.start_time)!));
+    if (r.end_time) maxSlutt = Math.max(maxSlutt, Math.ceil(timer(r.end_time)!));
   }
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const arbVindu =
-    minStart <= maxSlutt ? `Arb.vindu ${pad(minStart)}–${pad(maxSlutt)}` : "Bil";
+  // Fall tilbake til hele døgnet hvis vi ikke har tider.
+  const skalaStart = minStart <= maxSlutt ? minStart : 0;
+  const skalaSlutt = minStart <= maxSlutt ? maxSlutt : 24;
+  const totalT = Math.max(skalaSlutt - skalaStart, 1);
+  const timePct = 100 / totalT;
+  const skalaTekst = `${pad(skalaStart)}–${pad(skalaSlutt)}`;
+
+  // Timemerker langs toppen (hver 1. time hvis kort vindu, ellers hver 2.).
+  const steg = totalT > 10 ? 2 : 1;
+  const timeMerker: number[] = [];
+  for (let h = skalaStart; h <= skalaSlutt; h += steg) timeMerker.push(h);
+
+  // Faste gridlinjer (én strek pr. time) som bakgrunn i cellene.
+  const gridBakgrunn = {
+    backgroundImage: `repeating-linear-gradient(to right, #F0EFEC 0, #F0EFEC 1px, transparent 1px, transparent ${timePct}%)`,
+  };
 
   // Kunder som har aktive ruter (til fargeforklaring).
   const kunderIVisning = new Map<string, string>();
@@ -155,10 +142,6 @@ export default async function RutemasterPage() {
   const bilValg = biler.map((b) => ({
     id: b.id,
     navn: `${b.reg_number} – ${b.make} ${b.model}`,
-  }));
-  const sjaforValg = (sjaforerRes.data ?? []).map((s) => ({
-    id: s.id,
-    navn: s.full_name as string,
   }));
 
   return (
@@ -183,7 +166,7 @@ export default async function RutemasterPage() {
             dagsoversikten.
           </p>
         </div>
-        <NyRute kunder={kundeValg} biler={bilValg} sjaforer={sjaforValg} />
+        <NyRute kunder={kundeValg} biler={bilValg} />
       </div>
 
       {error && (
@@ -210,27 +193,27 @@ export default async function RutemasterPage() {
         </div>
       )}
 
-      {/* ---------- Ukesmal: rader = biler, kolonner = ukedager ---------- */}
+      {/* ---------- Ukesmal med tidslinje ---------- */}
       <div
         className="mt-4 overflow-x-auto rounded-2xl shadow-sm"
         style={{ backgroundColor: "var(--surface)", border: "1px solid var(--border)" }}
       >
-        <div style={{ minWidth: 920 }}>
-          {/* Hode */}
+        <div style={{ minWidth: 1040 }}>
+          {/* Dag-hode */}
           <div
             className="grid border-b text-[12px]"
             style={{ gridTemplateColumns: GRID_KOLONNER, borderColor: "var(--border)" }}
           >
             <div
-              className="px-4 py-3 font-semibold uppercase tracking-wide"
+              className="px-4 py-2 font-semibold uppercase tracking-wide"
               style={{ color: "var(--text-tertiary)" }}
             >
-              {arbVindu}
+              Tid {skalaTekst}
             </div>
             {UKEDAGER.map((u) => (
               <div
                 key={u.nr}
-                className="border-l px-3 py-3 font-semibold"
+                className="border-l px-3 pt-2 font-semibold"
                 style={{
                   borderColor: "var(--border)",
                   color: "var(--foreground)",
@@ -238,6 +221,21 @@ export default async function RutemasterPage() {
                 }}
               >
                 {u.kort}
+                {/* Timelinjal */}
+                <div className="relative mt-1 h-3" style={{ fontWeight: 400 }}>
+                  {timeMerker.map((h) => (
+                    <span
+                      key={h}
+                      className="absolute -translate-x-1/2 text-[9.5px]"
+                      style={{
+                        left: `${(h - skalaStart) * timePct}%`,
+                        color: "var(--text-tertiary)",
+                      }}
+                    >
+                      {pad(h)}
+                    </span>
+                  ))}
+                </div>
               </div>
             ))}
           </div>
@@ -246,8 +244,7 @@ export default async function RutemasterPage() {
           {rader.length === 0 ? (
             <div className="p-10 text-center">
               <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-                Ingen aktive ruter ennå. Trykk <strong>Ny rute</strong> for å
-                legge inn den første.
+                Ingen biler ennå. Legg inn biler under <strong>Biler</strong>.
               </p>
             </div>
           ) : (
@@ -268,63 +265,82 @@ export default async function RutemasterPage() {
                   <div className="text-[12px]" style={{ color: "var(--text-tertiary)" }}>
                     {rad.undertittel}
                   </div>
-                  {rad.sjaforNavn && (
-                    <div className="mt-0.5 text-[12.5px]">{rad.sjaforNavn}</div>
-                  )}
                 </div>
 
-                {/* Dagceller */}
+                {/* Dagceller med tidslinje */}
                 {UKEDAGER.map((u) => {
                   const celleRuter = perBilDag.get(`${rad.id}|${u.nr}`) ?? [];
+                  const hoyde = Math.max(celleRuter.length, 1) * (LANE_H + 4) + 4;
                   return (
                     <div
                       key={u.nr}
-                      className="border-l p-1.5"
+                      className="relative border-l"
                       style={{
                         borderColor: "var(--border)",
-                        backgroundColor: u.nr >= 6 ? "#FBFBFA" : "transparent",
+                        minHeight: hoyde,
+                        ...gridBakgrunn,
+                        ...(u.nr >= 6 ? { backgroundColor: "#FBFBFA" } : {}),
                       }}
                     >
-                      <div className="flex flex-wrap gap-1.5">
-                        {celleRuter.map((r) => {
-                          const f = fargeFor(r.customer_id);
-                          const kundeTekst = r.customer_id
-                            ? kundeNavn.get(r.customer_id) ?? "—"
-                            : "—";
-                          const start = kl(r.start_time);
-                          return (
-                            <div
-                              key={r.id}
-                              className="min-w-[64px] flex-1 rounded-[8px] px-2 py-1.5"
-                              style={{
-                                backgroundColor: f.soft,
-                                borderLeft: `3px solid ${f.solid}`,
-                              }}
-                              title={`${r.route_number ? r.route_number + " · " : ""}${kundeTekst}${start ? " · " + start : ""}`}
-                            >
+                      {celleRuter.map((r, i) => {
+                        const f = fargeFor(r.customer_id);
+                        const kundeTekst = r.customer_id
+                          ? kundeNavn.get(r.customer_id) ?? "—"
+                          : "—";
+                        const sH = timer(r.start_time);
+                        const eHraw = timer(r.end_time);
+                        const eH = eHraw ?? (sH != null ? sH + 1 : null);
+                        const harTid = sH != null;
+                        const left = harTid
+                          ? Math.max((sH - skalaStart) * timePct, 0)
+                          : 0;
+                        const width = harTid
+                          ? Math.min(
+                              Math.max(((eH! - sH) * timePct), 6),
+                              100 - left,
+                            )
+                          : 100;
+                        const tidTekst =
+                          kl(r.start_time) && kl(r.end_time)
+                            ? `${kl(r.start_time)}–${kl(r.end_time)}`
+                            : kl(r.start_time) ?? "";
+                        return (
+                          <div
+                            key={r.id}
+                            className="absolute overflow-hidden rounded-[7px] px-2 py-1"
+                            style={{
+                              top: 4 + i * (LANE_H + 4),
+                              left: `${left}%`,
+                              width: `${width}%`,
+                              height: LANE_H,
+                              backgroundColor: f.soft,
+                              borderLeft: `3px solid ${f.solid}`,
+                            }}
+                            title={`${r.route_number ? r.route_number + " · " : ""}${kundeTekst}${tidTekst ? " · " + tidTekst : ""}${r.has_co_driver ? " · sidemann" : ""}`}
+                          >
+                            <div className="flex items-baseline gap-1">
                               {r.route_number && (
-                                <div
-                                  className="truncate text-[10.5px] font-semibold"
+                                <span
+                                  className="shrink-0 text-[10.5px] font-semibold"
                                   style={{ color: f.solid }}
                                 >
                                   {r.route_number}
-                                </div>
+                                </span>
                               )}
-                              <div className="truncate text-[12px] font-medium">
+                              <span className="truncate text-[11.5px] font-medium">
                                 {kundeTekst}
-                              </div>
-                              {start && (
-                                <div
-                                  className="text-[11px]"
-                                  style={{ color: "var(--text-tertiary)" }}
-                                >
-                                  {start}
-                                </div>
-                              )}
+                              </span>
                             </div>
-                          );
-                        })}
-                      </div>
+                            <div
+                              className="truncate text-[10.5px]"
+                              style={{ color: "var(--text-tertiary)" }}
+                            >
+                              {tidTekst}
+                              {r.has_co_driver ? " · +1" : ""}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   );
                 })}
@@ -358,7 +374,7 @@ export default async function RutemasterPage() {
                 <th className="px-4 py-3 font-semibold">Rute</th>
                 <th className="px-4 py-3 font-semibold">Kunde</th>
                 <th className="px-4 py-3 font-semibold">Bil</th>
-                <th className="px-4 py-3 font-semibold">Sjåfør</th>
+                <th className="px-4 py-3 font-semibold">Sidemann</th>
                 <th className="px-4 py-3 font-semibold">Tid</th>
                 <th className="px-4 py-3 font-semibold">Dager</th>
               </tr>
@@ -396,19 +412,7 @@ export default async function RutemasterPage() {
                     <td className="px-4 py-3">
                       {r.vehicle_id ? bilNavn.get(r.vehicle_id) ?? "–" : "–"}
                     </td>
-                    <td className="px-4 py-3">
-                      <div>
-                        {r.driver_id ? sjaforNavn.get(r.driver_id) ?? "–" : "–"}
-                      </div>
-                      {r.co_driver_id && (
-                        <div
-                          className="text-[12.5px]"
-                          style={{ color: "var(--text-tertiary)" }}
-                        >
-                          + {sjaforNavn.get(r.co_driver_id) ?? "sidemann"}
-                        </div>
-                      )}
-                    </td>
+                    <td className="px-4 py-3">{r.has_co_driver ? "Ja" : "Nei"}</td>
                     <td className="px-4 py-3">
                       <span style={{ fontFamily: "var(--font-dm-mono)" }}>{tid}</span>
                     </td>
