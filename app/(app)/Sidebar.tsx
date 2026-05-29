@@ -15,7 +15,7 @@ const NAV: NavItem[] = [
   { label: "Kunder", href: "/kunder", ready: true },
   { label: "Biler", href: "/biler", ready: true },
   { label: "Sjåfører", href: "/sjaforer", ready: true },
-  { label: "Kontroll", href: "/kontroll", ready: false },
+  { label: "Kontroll", href: "/kontroll", ready: true },
 ];
 
 export default function Sidebar({
