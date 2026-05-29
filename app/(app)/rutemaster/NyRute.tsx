@@ -11,6 +11,17 @@ const inputStil: React.CSSProperties = {
 
 export type Valg = { id: string; navn: string };
 
+// ISO-ukedager: 1 = mandag … 7 = søndag.
+const UKEDAGER: { nr: number; kort: string }[] = [
+  { nr: 1, kort: "Man" },
+  { nr: 2, kort: "Tir" },
+  { nr: 3, kort: "Ons" },
+  { nr: 4, kort: "Tor" },
+  { nr: 5, kort: "Fre" },
+  { nr: 6, kort: "Lør" },
+  { nr: 7, kort: "Søn" },
+];
+
 export default function NyRute({
   kunder,
   biler,
@@ -24,10 +35,18 @@ export default function NyRute({
   const [apen, setApen] = useState(false);
   const [laster, setLaster] = useState(false);
   const [feil, setFeil] = useState<string | null>(null);
+  const [dager, setDager] = useState<number[]>([1, 2, 3, 4, 5]); // man–fre
+
+  function veksleDag(nr: number) {
+    setDager((d) =>
+      d.includes(nr) ? d.filter((x) => x !== nr) : [...d, nr].sort(),
+    );
+  }
 
   function lukk() {
     setApen(false);
     setFeil(null);
+    setDager([1, 2, 3, 4, 5]);
   }
 
   async function lagre(e: React.FormEvent<HTMLFormElement>) {
@@ -145,23 +164,46 @@ export default function NyRute({
                 </Felt>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              <Felt label="Kjøredager">
+                <div className="flex flex-wrap gap-1.5">
+                  {UKEDAGER.map((u) => {
+                    const valgt = dager.includes(u.nr);
+                    return (
+                      <button
+                        key={u.nr}
+                        type="button"
+                        onClick={() => veksleDag(u.nr)}
+                        className="rounded-[8px] px-3 py-1.5 text-[13px] font-medium"
+                        style={
+                          valgt
+                            ? {
+                                backgroundColor: "var(--bring-green)",
+                                color: "#fff",
+                              }
+                            : {
+                                border: "1.5px solid var(--border-input)",
+                                color: "var(--text-secondary)",
+                              }
+                        }
+                      >
+                        {u.kort}
+                      </button>
+                    );
+                  })}
+                </div>
+                {/* Sender valgte dager til server-action-en. */}
+                {dager.map((d) => (
+                  <input key={d} type="hidden" name="weekdays" value={d} />
+                ))}
+              </Felt>
+
+              <div className="grid grid-cols-2 gap-3">
                 <Felt label="Tur (km)">
                   <input
                     name="distance_km"
                     type="number"
                     min="0"
                     placeholder="120"
-                    className="w-full px-3 py-2.5 text-[15px] outline-none"
-                    style={inputStil}
-                  />
-                </Felt>
-                <Felt label="Intervall (dager)">
-                  <input
-                    name="interval_days"
-                    type="number"
-                    min="1"
-                    defaultValue="1"
                     className="w-full px-3 py-2.5 text-[15px] outline-none"
                     style={inputStil}
                   />

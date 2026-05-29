@@ -1,18 +1,6 @@
-import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import NyRute from "./NyRute";
-import GenererVakter from "./GenererVakter";
-import { ukeData } from "./dates";
 import { kundeFarger, NOYTRAL, type Farge } from "./farger";
-
-type Shift = {
-  id: string;
-  route_id: string;
-  vehicle_id: string | null;
-  date: string;
-  driver_id: string | null;
-  status: string;
-};
 
 type Route = {
   id: string;
@@ -25,77 +13,57 @@ type Route = {
   start_time: string | null;
   end_time: string | null;
   distance_km: number | null;
-  interval_days: number;
+  weekdays: number[] | null;
   revenue_per_hour: number | null;
   active: boolean;
+};
+
+// ISO-ukedager: 1 = mandag … 7 = søndag.
+const UKEDAGER = [
+  { nr: 1, kort: "MAN" },
+  { nr: 2, kort: "TIR" },
+  { nr: 3, kort: "ONS" },
+  { nr: 4, kort: "TOR" },
+  { nr: 5, kort: "FRE" },
+  { nr: 6, kort: "LØR" },
+  { nr: 7, kort: "SØN" },
+];
+const DAG_KORT: Record<number, string> = {
+  1: "Man",
+  2: "Tir",
+  3: "Ons",
+  4: "Tor",
+  5: "Fre",
+  6: "Lør",
+  7: "Søn",
 };
 
 // Postgres "time" kommer som "HH:MM:SS" – vis bare timer og minutter.
 const kl = (t: string | null) => (t ? t.slice(0, 5) : null);
 
-const intervallTekst = (n: number) =>
-  n === 1 ? "Hver dag" : `Hver ${n}. dag`;
-
-// "2026-05-26" → "26. mai"
-function datoKort(dato: string) {
-  return new Intl.DateTimeFormat("nb-NO", {
-    day: "numeric",
-    month: "short",
-    timeZone: "UTC",
-  }).format(new Date(`${dato}T12:00:00Z`));
-}
-
-// "2026-05-26" → "MAN"
-function ukedagKort(dato: string) {
-  return new Intl.DateTimeFormat("nb-NO", {
-    weekday: "short",
-    timeZone: "UTC",
-  })
-    .format(new Date(`${dato}T12:00:00Z`))
-    .toUpperCase();
-}
-
 const GRID_KOLONNER = "180px repeat(7, minmax(0, 1fr))";
 
-export default async function RutemasterPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ uke?: string }>;
-}) {
-  const sp = await searchParams;
-  const offset = Math.trunc(Number(sp?.uke ?? 0)) || 0;
-  const uke = ukeData(offset);
-  const datoer = uke.datoer;
-
+export default async function RutemasterPage() {
   const supabase = await createClient();
 
-  // Hent ruter + vakter for uken + listene vi trenger for navn og skjema.
-  const [ruterRes, kunderRes, bilerRes, sjaforerRes, vakterRes] =
-    await Promise.all([
-      supabase
-        .from("route")
-        .select(
-          "id, name, route_number, customer_id, vehicle_id, driver_id, co_driver_id, start_time, end_time, distance_km, interval_days, revenue_per_hour, active",
-        )
-        .order("created_at", { ascending: false }),
-      supabase.from("customer").select("id, name").order("name"),
-      supabase
-        .from("vehicle")
-        .select("id, reg_number, make, model")
-        .order("reg_number"),
-      supabase.from("driver").select("id, full_name").order("full_name"),
-      supabase
-        .from("shift")
-        .select("id, route_id, vehicle_id, date, driver_id, status")
-        .gte("date", datoer[0])
-        .lte("date", datoer[datoer.length - 1])
-        .order("date"),
-    ]);
+  const [ruterRes, kunderRes, bilerRes, sjaforerRes] = await Promise.all([
+    supabase
+      .from("route")
+      .select(
+        "id, name, route_number, customer_id, vehicle_id, driver_id, co_driver_id, start_time, end_time, distance_km, weekdays, revenue_per_hour, active",
+      )
+      .order("created_at", { ascending: false }),
+    supabase.from("customer").select("id, name").order("name"),
+    supabase.from("vehicle").select("id, reg_number, make, model").order("reg_number"),
+    supabase.from("driver").select("id, full_name").order("full_name"),
+  ]);
 
   const ruter = (ruterRes.data ?? []) as Route[];
   const biler = bilerRes.data ?? [];
-  const vakter = (vakterRes.data ?? []) as Shift[];
-  const error = ruterRes.error || vakterRes.error;
+  const error = ruterRes.error;
+
+  // Bare aktive ruter inngår i ukesmalen.
+  const aktiveRuter = ruter.filter((r) => r.active);
 
   // ---------- Oppslag ----------
   const kundeNavn = new Map(
@@ -107,48 +75,39 @@ export default async function RutemasterPage({
   const bilNavn = new Map(
     biler.map((b) => [b.id, `${b.reg_number} (${b.make} ${b.model})`]),
   );
-  const routeInfo = new Map(
-    ruter.map((r) => [
-      r.id,
-      {
-        nummer: r.route_number,
-        kundeId: r.customer_id,
-        start: kl(r.start_time),
-      },
-    ]),
-  );
 
-  // Fast farge pr. kunde (stabil rekkefølge fra kunde-listen).
   const farger = kundeFarger((kunderRes.data ?? []).map((k) => k.id));
   const fargeFor = (kundeId: string | null | undefined): Farge =>
     (kundeId && farger.get(kundeId)) || NOYTRAL;
 
-  // ---------- Bygg rader (pr. bil) + oppslag for kort ----------
-  // Nøkkel "bilId|dato" → vakter. Vakter uten bil samles under "UTEN".
-  const perBilDag = new Map<string, Shift[]>();
-  const bilerMedVakt = new Set<string>();
-  const bilSjafor = new Map<string, string>(); // representativ sjåfør pr. bil
+  // ---------- Bygg rader (pr. bil) ----------
+  // Nøkkel "bilId|ukedag" → ruter. Ruter uten bil samles under "UTEN".
+  const perBilDag = new Map<string, Route[]>();
+  const bilerMedRute = new Set<string>();
+  const bilSjafor = new Map<string, string>();
   let harUtenBil = false;
 
-  for (const v of vakter) {
-    const bilNokkel = v.vehicle_id ?? "UTEN";
-    if (v.vehicle_id) bilerMedVakt.add(v.vehicle_id);
+  for (const r of aktiveRuter) {
+    const bilNokkel = r.vehicle_id ?? "UTEN";
+    if (r.vehicle_id) bilerMedRute.add(r.vehicle_id);
     else harUtenBil = true;
-    const k = `${bilNokkel}|${v.date}`;
-    (perBilDag.get(k) ?? perBilDag.set(k, []).get(k)!).push(v);
-    if (v.vehicle_id && v.driver_id && !bilSjafor.has(v.vehicle_id)) {
-      bilSjafor.set(v.vehicle_id, v.driver_id);
+    if (r.vehicle_id && r.driver_id && !bilSjafor.has(r.vehicle_id)) {
+      bilSjafor.set(r.vehicle_id, r.driver_id);
+    }
+    for (const dag of r.weekdays ?? []) {
+      const k = `${bilNokkel}|${dag}`;
+      (perBilDag.get(k) ?? perBilDag.set(k, []).get(k)!).push(r);
     }
   }
 
   type Rad = {
     id: string;
-    tittel: string; // reg.nr eller "Uten bil"
-    undertittel: string; // merke/modell
+    tittel: string;
+    undertittel: string;
     sjaforNavn: string | null;
   };
   const rader: Rad[] = biler
-    .filter((b) => bilerMedVakt.has(b.id))
+    .filter((b) => bilerMedRute.has(b.id))
     .map((b) => ({
       id: b.id,
       tittel: b.reg_number,
@@ -166,15 +125,13 @@ export default async function RutemasterPage({
     });
   }
 
-  // Arbeidsvindu: tidligste start- og seneste sluttime blant rutene i uken.
+  // Arbeidsvindu: tidligste start- og seneste sluttime blant de aktive rutene.
   let minStart = 24;
   let maxSlutt = 0;
-  for (const v of vakter) {
-    const r = ruter.find((x) => x.id === v.route_id);
-    if (r?.start_time) minStart = Math.min(minStart, Number(r.start_time.slice(0, 2)));
-    if (r?.end_time) {
-      const t = r.end_time;
-      const h = Number(t.slice(0, 2)) + (Number(t.slice(3, 5)) > 0 ? 1 : 0);
+  for (const r of aktiveRuter) {
+    if (r.start_time) minStart = Math.min(minStart, Number(r.start_time.slice(0, 2)));
+    if (r.end_time) {
+      const h = Number(r.end_time.slice(0, 2)) + (Number(r.end_time.slice(3, 5)) > 0 ? 1 : 0);
       maxSlutt = Math.max(maxSlutt, h);
     }
   }
@@ -182,11 +139,12 @@ export default async function RutemasterPage({
   const arbVindu =
     minStart <= maxSlutt ? `Arb.vindu ${pad(minStart)}–${pad(maxSlutt)}` : "Bil";
 
-  // Kunder som faktisk har vakter i uken (til fargeforklaring).
+  // Kunder som har aktive ruter (til fargeforklaring).
   const kunderIVisning = new Map<string, string>();
-  for (const v of vakter) {
-    const kId = routeInfo.get(v.route_id)?.kundeId;
-    if (kId && kundeNavn.has(kId)) kunderIVisning.set(kId, kundeNavn.get(kId)!);
+  for (const r of aktiveRuter) {
+    if (r.customer_id && kundeNavn.has(r.customer_id)) {
+      kunderIVisning.set(r.customer_id, kundeNavn.get(r.customer_id)!);
+    }
   }
 
   // Valg til skjemaet.
@@ -220,44 +178,12 @@ export default async function RutemasterPage({
           >
             Rutemaster
           </h1>
+          <p className="mt-1 text-[13px]" style={{ color: "var(--text-tertiary)" }}>
+            Standard-uke. Vaktene lages automatisk 7 dager frem og vises i
+            dagsoversikten.
+          </p>
         </div>
         <NyRute kunder={kundeValg} biler={bilValg} sjaforer={sjaforValg} />
-      </div>
-
-      {/* ---------- Verktøylinje: ukenavigasjon + handlinger ---------- */}
-      <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <div
-            className="flex items-center gap-1 rounded-[12px] p-1"
-            style={{ backgroundColor: "var(--surface)", border: "1px solid var(--border)" }}
-          >
-            <PilLenke uke={offset - 1} retning="forrige" />
-            <div className="px-2 text-center">
-              <span className="text-[14px] font-semibold">Uke {uke.ukenummer}</span>
-              <span
-                className="ml-2 text-[13px]"
-                style={{ color: "var(--text-tertiary)" }}
-              >
-                {uke.label}
-              </span>
-            </div>
-            <PilLenke uke={offset + 1} retning="neste" />
-          </div>
-          <Link
-            href="/rutemaster"
-            aria-disabled={uke.erDenneUken}
-            className="h-[38px] rounded-[10px] px-3 text-sm font-medium leading-[38px]"
-            style={{
-              border: "1px solid var(--border)",
-              color: uke.erDenneUken ? "var(--text-tertiary)" : "var(--foreground)",
-              backgroundColor: "var(--surface)",
-              pointerEvents: uke.erDenneUken ? "none" : "auto",
-            }}
-          >
-            Denne uka
-          </Link>
-        </div>
-        <GenererVakter />
       </div>
 
       {error && (
@@ -265,7 +191,7 @@ export default async function RutemasterPage({
           className="mt-4 rounded-[10px] px-4 py-3 text-sm"
           style={{ backgroundColor: "#FCE5E2", color: "#7A1410" }}
         >
-          Kunne ikke hente data: {error.message}
+          Kunne ikke hente ruter: {error.message}
         </p>
       )}
 
@@ -284,7 +210,7 @@ export default async function RutemasterPage({
         </div>
       )}
 
-      {/* ---------- Gantt: rader = biler, kolonner = dager ---------- */}
+      {/* ---------- Ukesmal: rader = biler, kolonner = ukedager ---------- */}
       <div
         className="mt-4 overflow-x-auto rounded-2xl shadow-sm"
         style={{ backgroundColor: "var(--surface)", border: "1px solid var(--border)" }}
@@ -301,19 +227,17 @@ export default async function RutemasterPage({
             >
               {arbVindu}
             </div>
-            {datoer.map((d, i) => (
+            {UKEDAGER.map((u) => (
               <div
-                key={d}
-                className="border-l px-3 py-3"
+                key={u.nr}
+                className="border-l px-3 py-3 font-semibold"
                 style={{
                   borderColor: "var(--border)",
-                  backgroundColor: i >= 5 ? "#FBFBFA" : "transparent",
+                  color: "var(--foreground)",
+                  backgroundColor: u.nr >= 6 ? "#FBFBFA" : "transparent",
                 }}
               >
-                <div className="font-semibold" style={{ color: "var(--foreground)" }}>
-                  {ukedagKort(d)}
-                </div>
-                <div style={{ color: "var(--text-tertiary)" }}>{datoKort(d)}</div>
+                {u.kort}
               </div>
             ))}
           </div>
@@ -322,8 +246,8 @@ export default async function RutemasterPage({
           {rader.length === 0 ? (
             <div className="p-10 text-center">
               <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-                Ingen vakter denne uken. Trykk{" "}
-                <strong>Generer vakter</strong> for å fylle opp – eller bytt uke.
+                Ingen aktive ruter ennå. Trykk <strong>Ny rute</strong> for å
+                legge inn den første.
               </p>
             </div>
           ) : (
@@ -350,51 +274,51 @@ export default async function RutemasterPage({
                 </div>
 
                 {/* Dagceller */}
-                {datoer.map((d, i) => {
-                  const celleVakter = perBilDag.get(`${rad.id}|${d}`) ?? [];
+                {UKEDAGER.map((u) => {
+                  const celleRuter = perBilDag.get(`${rad.id}|${u.nr}`) ?? [];
                   return (
                     <div
-                      key={d}
+                      key={u.nr}
                       className="border-l p-1.5"
                       style={{
                         borderColor: "var(--border)",
-                        backgroundColor: i >= 5 ? "#FBFBFA" : "transparent",
+                        backgroundColor: u.nr >= 6 ? "#FBFBFA" : "transparent",
                       }}
                     >
                       <div className="flex flex-wrap gap-1.5">
-                        {celleVakter.map((v) => {
-                          const info = routeInfo.get(v.route_id);
-                          const f = fargeFor(info?.kundeId);
-                          const kundeTekst = info?.kundeId
-                            ? kundeNavn.get(info.kundeId) ?? "—"
+                        {celleRuter.map((r) => {
+                          const f = fargeFor(r.customer_id);
+                          const kundeTekst = r.customer_id
+                            ? kundeNavn.get(r.customer_id) ?? "—"
                             : "—";
+                          const start = kl(r.start_time);
                           return (
                             <div
-                              key={v.id}
+                              key={r.id}
                               className="min-w-[64px] flex-1 rounded-[8px] px-2 py-1.5"
                               style={{
                                 backgroundColor: f.soft,
                                 borderLeft: `3px solid ${f.solid}`,
                               }}
-                              title={`${info?.nummer ? info.nummer + " · " : ""}${kundeTekst}${info?.start ? " · " + info.start : ""}`}
+                              title={`${r.route_number ? r.route_number + " · " : ""}${kundeTekst}${start ? " · " + start : ""}`}
                             >
-                              {info?.nummer && (
+                              {r.route_number && (
                                 <div
                                   className="truncate text-[10.5px] font-semibold"
                                   style={{ color: f.solid }}
                                 >
-                                  {info.nummer}
+                                  {r.route_number}
                                 </div>
                               )}
                               <div className="truncate text-[12px] font-medium">
                                 {kundeTekst}
                               </div>
-                              {info?.start && (
+                              {start && (
                                 <div
                                   className="text-[11px]"
                                   style={{ color: "var(--text-tertiary)" }}
                                 >
-                                  {info.start}
+                                  {start}
                                 </div>
                               )}
                             </div>
@@ -436,7 +360,7 @@ export default async function RutemasterPage({
                 <th className="px-4 py-3 font-semibold">Bil</th>
                 <th className="px-4 py-3 font-semibold">Sjåfør</th>
                 <th className="px-4 py-3 font-semibold">Tid</th>
-                <th className="px-4 py-3 font-semibold">Intervall</th>
+                <th className="px-4 py-3 font-semibold">Dager</th>
               </tr>
             </thead>
             <tbody>
@@ -445,6 +369,10 @@ export default async function RutemasterPage({
                 const slutt = kl(r.end_time);
                 const tid =
                   start || slutt ? `${start ?? "?"}–${slutt ?? "?"}` : "–";
+                const dager = (r.weekdays ?? [])
+                  .map((d) => DAG_KORT[d])
+                  .filter(Boolean)
+                  .join(", ");
                 return (
                   <tr
                     key={r.id}
@@ -484,7 +412,19 @@ export default async function RutemasterPage({
                     <td className="px-4 py-3">
                       <span style={{ fontFamily: "var(--font-dm-mono)" }}>{tid}</span>
                     </td>
-                    <td className="px-4 py-3">{intervallTekst(r.interval_days)}</td>
+                    <td className="px-4 py-3">
+                      {dager || (
+                        <span style={{ color: "var(--text-tertiary)" }}>–</span>
+                      )}
+                      {!r.active && (
+                        <span
+                          className="ml-2 rounded-full px-2 py-0.5 text-[11px]"
+                          style={{ backgroundColor: "#F1F0ED", color: "#6E6E6E" }}
+                        >
+                          inaktiv
+                        </span>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -493,19 +433,5 @@ export default async function RutemasterPage({
         )}
       </div>
     </div>
-  );
-}
-
-// Pil for ukenavigasjon (lenke som bytter ?uke=…).
-function PilLenke({ uke, retning }: { uke: number; retning: "forrige" | "neste" }) {
-  return (
-    <Link
-      href={uke === 0 ? "/rutemaster" : `/rutemaster?uke=${uke}`}
-      aria-label={retning === "forrige" ? "Forrige uke" : "Neste uke"}
-      className="flex h-8 w-8 items-center justify-center rounded-[8px] text-[18px] leading-none"
-      style={{ color: "var(--text-secondary)" }}
-    >
-      {retning === "forrige" ? "‹" : "›"}
-    </Link>
   );
 }
