@@ -148,7 +148,50 @@ full GDPR-håndtering · lønnsintegrasjon.
 - `npm run lint` – kjør ESLint
 
 Miljøvariabler ligger i `.env.local` (git-ignorert). Mal: `.env.local.example`.
-Prosjektstruktur: `app/` (sider), `lib/supabase/` (database-/innloggingsklienter).
+
+---
+
+## Kodestruktur og arbeidsmåte (oppdatert etter M1)
+
+**Stack i praksis:** Next.js 16 (App Router, Turbopack), React 19, Tailwind v4,
+Supabase via `@supabase/ssr`. Hosting: Vercel (auto-deploy ved push).
+
+**Mappestruktur:**
+- `app/login/` – innloggingsside (Supabase Auth, e-post/passord).
+- `app/(app)/` – innlogget område med felles `layout.tsx` (sidemeny + topplinje).
+  Rutegruppen `(app)` påvirker ikke URL-ene. Inneholder `Sidebar.tsx` og skjermene
+  `dagsoversikt/`, `biler/`, `sjaforer/`.
+- `app/auth/actions.ts` – `signOut`.
+- `lib/supabase/` – `client.ts` (nettleser), `server.ts` (server), `update-session.ts`.
+- `proxy.ts` – Next 16 sitt «middleware»: fornyer økt og sender uinnloggede til `/login`.
+- `supabase/migrations/` – SQL-skjema (kjøres manuelt i Supabase, se under).
+- `app/globals.css` – Bring-designtokens (farger som CSS-variabler), DM Sans-font.
+
+**Mønster per skjerm (følg dette videre):**
+- `page.tsx` = server-komponent som henter data med server-klienten.
+- Skjema = klientkomponent (`"use client"`) som kaller en **server action** i
+  `actions.ts`; action-en gjør insert/update og `revalidatePath(...)`.
+- Hver rad knyttes til brukerens `unit_id` (hentet fra `profile`). RLS i databasen
+  håndhever tilgang – aldri stol kun på UI.
+
+**Statusverdier (enum i DB):** `vehicle.status` ∈ {`i_drift`,`ledig`,`pa_verksted`};
+`driver.status` ∈ {`aktiv`,`inaktiv`}. Roller: `profile.role` ∈ {1,2,3}.
+
+**Startdata:** én region «Oslo» + én enhet «Oslo Distribusjon» (`OSL-01`). Alle
+auth-brukere kobles som rolle 1 (transportleder) til denne enheten (midlertidig –
+ekte brukerstyring kommer senere).
+
+## Viktig for utvikling (les før du jobber)
+
+- **Eieren jobber kun i nettleseren** og kan ikke kjøre kommandoer/SQL lokalt.
+  Forklar i klartekst, jobb i små steg, og si fra hva som må gjøres i Supabase/Vercel.
+- **Databaseendringer:** lag en ny fil i `supabase/migrations/` OG gi eieren SQL-en
+  til å lime inn i Supabase → SQL Editor. Agenten kan ikke kjøre SQL mot Supabase.
+- **Nettverkssperre i agentmiljøet:** dette miljøet når ikke Supabase
+  («Host not in allowlist»). Verifiser derfor med `npm run build` og `npm run lint`;
+  faktisk datatest skjer på Vercel etter push.
+- **Deploy:** push til arbeidsbranchen. Vercel sin produksjonsbranch må peke på den
+  branchen for at nettsiden skal oppdatere seg (sjekk Vercel → Settings → Git).
 
 ---
 
