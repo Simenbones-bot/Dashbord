@@ -13,7 +13,7 @@ const NAV: NavItem[] = [
   { label: "Dagsoversikt", href: "/dagsoversikt", ready: true },
   { label: "Rutemaster", href: "/rutemaster", ready: false },
   { label: "Biler", href: "/biler", ready: true },
-  { label: "Sjåfører", href: "/sjaforer", ready: false },
+  { label: "Sjåfører", href: "/sjaforer", ready: true },
   { label: "Kontroll", href: "/kontroll", ready: false },
 ];
 
