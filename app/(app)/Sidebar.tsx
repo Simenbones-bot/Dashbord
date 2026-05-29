@@ -11,7 +11,6 @@ type NavItem = {
 
 const NAV: NavItem[] = [
   { label: "Dagsoversikt", href: "/dagsoversikt", ready: true },
-  { label: "Stempling", href: "/stempling", ready: true },
   { label: "Rutemaster", href: "/rutemaster", ready: true },
   { label: "Kunder", href: "/kunder", ready: true },
   { label: "Biler", href: "/biler", ready: true },

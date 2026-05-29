@@ -34,9 +34,14 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Uinnlogget? Send til /login (bortsett fra selve /login-siden).
+  // Uinnlogget? Send til /login (bortsett fra selve /login-siden og den
+  // offentlige stemplingssiden /stemple som sjåfører bruker uten innlogging).
   const pathname = request.nextUrl.pathname;
-  if (!user && !pathname.startsWith("/login")) {
+  if (
+    !user &&
+    !pathname.startsWith("/login") &&
+    !pathname.startsWith("/stemple")
+  ) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);

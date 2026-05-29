@@ -9,7 +9,6 @@ export type Valg = { id: string; navn: string };
 export type ShiftKort = {
   id: string;
   tittel: string;
-  bil: string;
   planlagt: string;
   sidemann: boolean;
   innTid: string | null;
@@ -31,10 +30,12 @@ const inputStil: React.CSSProperties = {
   borderRadius: 10,
 };
 
-export default function Stempling({
+export default function Stemple({
+  token,
   kort,
   sjaforer,
 }: {
+  token: string;
   kort: ShiftKort[];
   sjaforer: Valg[];
 }) {
@@ -60,7 +61,7 @@ export default function Stempling({
     if (!valgt) return;
     setLaster(true);
     setFeil(null);
-    const res = await stempleInn(valgt.id, sjafor, kommentar);
+    const res = await stempleInn(token, valgt.id, sjafor, kommentar);
     setLaster(false);
     if (!res.ok) return setFeil(res.feil);
     lukk();
@@ -70,7 +71,7 @@ export default function Stempling({
     if (!valgt) return;
     setLaster(true);
     setFeil(null);
-    const res = await stempleUt(valgt.id, kommentar);
+    const res = await stempleUt(token, valgt.id, kommentar);
     setLaster(false);
     if (!res.ok) return setFeil(res.feil);
     lukk();
@@ -84,7 +85,7 @@ export default function Stempling({
         style={{ backgroundColor: "var(--surface)" }}
       >
         <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-          Ingen vakter i dag. Vaktene lages automatisk fra Rutemaster.
+          Ingen vakter på denne bilen i dag.
         </p>
       </div>
     );
@@ -111,12 +112,9 @@ export default function Stempling({
                     {k.tittel}
                   </div>
                   <div
-                    className="mt-0.5 truncate text-[13px]"
-                    style={{ color: "var(--text-tertiary)" }}
+                    className="mt-1 text-[13px]"
+                    style={{ color: "var(--text-secondary)" }}
                   >
-                    {k.bil}
-                  </div>
-                  <div className="mt-1 text-[13px]" style={{ color: "var(--text-secondary)" }}>
                     Planlagt {k.planlagt}
                     {k.sidemann ? " · sidemann" : ""}
                   </div>
@@ -128,7 +126,6 @@ export default function Stempling({
         })}
       </div>
 
-      {/* Skuff */}
       {valgt && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center sm:justify-center">
           <div
@@ -146,7 +143,7 @@ export default function Stempling({
                   {valgt.tittel}
                 </h2>
                 <p className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>
-                  {valgt.bil} · planlagt {valgt.planlagt}
+                  Planlagt {valgt.planlagt}
                 </p>
               </div>
               <button
@@ -159,7 +156,6 @@ export default function Stempling({
               </button>
             </div>
 
-            {/* Innhold avhengig av status */}
             {status === "ferdig" ? (
               <div
                 className="rounded-[10px] p-4 text-[14px]"
@@ -188,7 +184,7 @@ export default function Stempling({
                     <select
                       value={sjafor}
                       onChange={(e) => setSjafor(e.target.value)}
-                      className="w-full bg-white px-3 py-2.5 text-[15px] outline-none"
+                      className="w-full bg-white px-3 py-3 text-[16px] outline-none"
                       style={inputStil}
                     >
                       <option value="">Velg sjåfør …</option>
@@ -210,7 +206,7 @@ export default function Stempling({
                     onChange={(e) => setKommentar(e.target.value)}
                     rows={3}
                     placeholder="F.eks. forsinket start, skade oppdaget …"
-                    className="w-full px-3 py-2.5 text-[15px] outline-none"
+                    className="w-full px-3 py-2.5 text-[16px] outline-none"
                     style={inputStil}
                   />
                 </label>
@@ -229,7 +225,7 @@ export default function Stempling({
                     type="button"
                     onClick={inn}
                     disabled={laster}
-                    className="h-12 w-full rounded-[10px] text-[15px] font-semibold text-white disabled:opacity-60"
+                    className="h-12 w-full rounded-[10px] text-[16px] font-semibold text-white disabled:opacity-60"
                     style={{ backgroundColor: "var(--bring-green)" }}
                   >
                     {laster ? "Stempler …" : "Stemple inn"}
@@ -239,7 +235,7 @@ export default function Stempling({
                     type="button"
                     onClick={ut}
                     disabled={laster}
-                    className="h-12 w-full rounded-[10px] text-[15px] font-semibold text-white disabled:opacity-60"
+                    className="h-12 w-full rounded-[10px] text-[16px] font-semibold text-white disabled:opacity-60"
                     style={{ backgroundColor: "#7A1410" }}
                   >
                     {laster ? "Stempler …" : "Stemple ut"}

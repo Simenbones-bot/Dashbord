@@ -1,5 +1,8 @@
+import { headers } from "next/headers";
+import QRCode from "qrcode";
 import { createClient } from "@/lib/supabase/server";
 import NyBil from "./NyBil";
+import StemplingQR from "./StemplingQR";
 import { STATUS_VALG } from "./makes";
 
 type Vehicle = {
@@ -13,6 +16,7 @@ type Vehicle = {
   service_cost_yearly: number | null;
   eu_control_date: string | null;
   next_service_date: string | null;
+  stamp_token: string;
 };
 
 const kr = (n: number | null) =>
@@ -37,11 +41,28 @@ export default async function BilerPage() {
   const { data, error } = await supabase
     .from("vehicle")
     .select(
-      "id, reg_number, make, model, model_year, status, leasing_cost_monthly, service_cost_yearly, eu_control_date, next_service_date",
+      "id, reg_number, make, model, model_year, status, leasing_cost_monthly, service_cost_yearly, eu_control_date, next_service_date, stamp_token",
     )
     .order("created_at", { ascending: false });
 
   const biler = (data ?? []) as Vehicle[];
+
+  // Bygg stemplingslenke + QR-kode (SVG) pr. bil.
+  const h = await headers();
+  const proto = h.get("x-forwarded-proto") ?? "https";
+  const base = `${proto}://${h.get("host") ?? ""}`;
+  const stempling = new Map<string, { link: string; qrSvg: string }>();
+  await Promise.all(
+    biler.map(async (b) => {
+      const link = `${base}/stemple/${b.stamp_token}`;
+      const qrSvg = await QRCode.toString(link, {
+        type: "svg",
+        margin: 1,
+        width: 200,
+      });
+      stempling.set(b.id, { link, qrSvg });
+    }),
+  );
 
   const antall = (s: string) => biler.filter((b) => b.status === s).length;
   const stats = [
@@ -132,6 +153,7 @@ export default async function BilerPage() {
                 <Th>Servicekost/år</Th>
                 <Th>EU-kontroll</Th>
                 <Th>Neste service</Th>
+                <Th>Stempling</Th>
               </tr>
             </thead>
             <tbody>
@@ -168,6 +190,13 @@ export default async function BilerPage() {
                   <td className="px-4 py-3">{kr(b.service_cost_yearly)}</td>
                   <td className="px-4 py-3">{dato(b.eu_control_date)}</td>
                   <td className="px-4 py-3">{dato(b.next_service_date)}</td>
+                  <td className="px-4 py-3">
+                    <StemplingQR
+                      regNumber={b.reg_number}
+                      link={stempling.get(b.id)?.link ?? ""}
+                      qrSvg={stempling.get(b.id)?.qrSvg ?? ""}
+                    />
+                  </td>
                 </tr>
               ))}
             </tbody>
