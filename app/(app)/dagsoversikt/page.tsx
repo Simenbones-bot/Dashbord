@@ -11,13 +11,18 @@ import AutoRefresh from "./AutoRefresh";
 
 // ---------- Typer ----------
 
-type DriverInfo = { full_name: string } | null;
+// Supabase returnerer en relasjon som ETT objekt (én-til-én, f.eks. time_entry
+// som har unique(shift_id)), som en LISTE (én-til-mange) eller som null. Denne
+// typen + forste() under håndterer alle tre trygt.
+type Rel<T> = T | T[] | null | undefined;
+
+type DriverInfo = { full_name: string };
 
 type TimeEntry = {
   check_in: string | null;
   check_out: string | null;
   comment: string | null;
-  driver: DriverInfo;
+  driver: Rel<DriverInfo>;
 };
 
 type VehicleInfo = {
@@ -25,7 +30,7 @@ type VehicleInfo = {
   reg_number: string;
   make: string;
   model: string;
-} | null;
+};
 
 type Shift = {
   id: string;
@@ -34,14 +39,21 @@ type Shift = {
   has_co_driver: boolean;
   status: string;
   date: string;
-  route: { name: string; route_number: string | null } | null;
-  vehicle: VehicleInfo;
-  planned_driver: DriverInfo;
-  time_entry: TimeEntry[];
-  vehicle_check: { status: string; comment: string | null }[];
+  route: Rel<{ name: string; route_number: string | null }>;
+  vehicle: Rel<VehicleInfo>;
+  planned_driver: Rel<DriverInfo>;
+  time_entry: Rel<TimeEntry>;
+  vehicle_check: Rel<{ status: string; comment: string | null }>;
 };
 
 type Farge = "gray" | "green" | "yellow" | "red";
+
+// Henter første/eneste element trygt uansett om relasjonen er objekt, liste
+// eller null.
+function forste<T>(v: Rel<T>): T | null {
+  if (Array.isArray(v)) return v[0] ?? null;
+  return v ?? null;
+}
 
 // ---------- Dato-hjelpere ----------
 
@@ -104,7 +116,7 @@ type Status = { farge: Farge; badge: string; sub: string };
 //   gul  = 5–10 min forsinket (med eller uten stempling)
 //   rød  = >10 min uten stempling ("Krever handling")
 function beregnStatus(shift: Shift, now: Date): Status {
-  const te = shift.time_entry[0] ?? null;
+  const te = forste(shift.time_entry);
 
   if (!shift.planned_start) {
     return { farge: "gray", badge: "Planlagt", sub: "Mangler tid" };
@@ -201,7 +213,7 @@ export default async function DagsoversiktPage({
 
   const tell = (f: Farge) =>
     skift.filter((s) => statusFor.get(s.id)?.farge === f).length;
-  const startet = skift.filter((s) => s.time_entry[0]?.check_in).length;
+  const startet = skift.filter((s) => forste(s.time_entry)?.check_in).length;
 
   // ---------- Statistikk-kort ----------
   const stats = [
@@ -241,7 +253,7 @@ export default async function DagsoversiktPage({
   };
   const radMap = new Map<string, Rad>();
   for (const s of skift) {
-    const v = s.vehicle;
+    const v = forste(s.vehicle);
     const id = v?.id ?? "UTEN";
     if (!radMap.has(id)) {
       radMap.set(id, {
@@ -258,7 +270,9 @@ export default async function DagsoversiktPage({
   for (const rad of radMap.values()) {
     const navn = new Set<string>();
     for (const s of rad.skift) {
-      const n = s.time_entry[0]?.driver?.full_name ?? s.planned_driver?.full_name;
+      const te = forste(s.time_entry);
+      const n =
+        forste(te?.driver)?.full_name ?? forste(s.planned_driver)?.full_name;
       if (n) navn.add(n);
     }
     rad.sjaforer = [...navn].join(" · ");
@@ -541,8 +555,9 @@ export default async function DagsoversiktPage({
                     {sortert.map((s) => {
                       const st = statusFor.get(s.id)!;
                       const cfg = FARGE[st.farge];
-                      const te = s.time_entry[0] ?? null;
-                      const vc = s.vehicle_check[0] ?? null;
+                      const te = forste(s.time_entry);
+                      const vc = forste(s.vehicle_check);
+                      const rute = forste(s.route);
                       const erAvlyst = s.status === "avlyst";
 
                       const sH = s.planned_start ? osloTime(s.planned_start) : minH;
@@ -556,7 +571,9 @@ export default async function DagsoversiktPage({
                           ? `${kl(s.planned_start)}–${kl(s.planned_end)}`
                           : kl(s.planned_start);
                       const sjafor =
-                        te?.driver?.full_name ?? s.planned_driver?.full_name ?? null;
+                        forste(te?.driver)?.full_name ??
+                        forste(s.planned_driver)?.full_name ??
+                        null;
                       const kommentar = te?.comment ?? vc?.comment ?? null;
 
                       return (
@@ -574,7 +591,7 @@ export default async function DagsoversiktPage({
                             borderLeftWidth: 3,
                             opacity: erAvlyst ? 0.5 : 1,
                           }}
-                          title={`${s.route?.name ?? ""}${tid !== "–" ? " · " + tid : ""}${
+                          title={`${rute?.name ?? ""}${tid !== "–" ? " · " + tid : ""}${
                             sjafor ? " · " + sjafor : ""
                           }${vc ? " · Bilsjekk: " + (vc.status === "ok" ? "OK" : "Avvik") : ""}${
                             kommentar ? " · " + kommentar : ""
@@ -582,12 +599,12 @@ export default async function DagsoversiktPage({
                         >
                           {/* Øverste linje: rutenr + status + tid */}
                           <div className="flex items-center gap-1.5">
-                            {s.route?.route_number && (
+                            {rute?.route_number && (
                               <span
                                 className="shrink-0 text-[11px] font-bold"
                                 style={{ color: cfg.accent }}
                               >
-                                {s.route.route_number}
+                                {rute.route_number}
                               </span>
                             )}
                             <span
@@ -609,7 +626,7 @@ export default async function DagsoversiktPage({
 
                           {/* Rutenavn */}
                           <div className="mt-0.5 truncate text-[13.5px] font-semibold">
-                            {s.route?.name ?? "—"}
+                            {rute?.name ?? "—"}
                             {s.has_co_driver && (
                               <span
                                 className="ml-1 text-[11px] font-normal"
