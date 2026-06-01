@@ -1,14 +1,20 @@
 import { createClient } from "@/lib/supabase/server";
 import NyRute from "./NyRute";
-import { kundeFarger, NOYTRAL, type Farge } from "./farger";
+import RuteHandlinger from "./RuteHandlinger";
+import { typeLabel, kategoriLabel, bemanningLabel, STANDARD_FARGE } from "./constants";
+import type { RuteData, Valg } from "./RuteSkjema";
 
 type Route = {
   id: string;
   name: string;
   route_number: string | null;
   customer_id: string | null;
-  vehicle_id: string | null;
+  route_type: string | null;
+  color: string | null;
+  vehicle_category: string | null;
   has_co_driver: boolean;
+  vehicles_needed: number;
+  vehicle_ids: string[] | null;
   start_time: string | null;
   end_time: string | null;
   distance_km: number | null;
@@ -43,6 +49,12 @@ const kl = (t: string | null) => (t ? t.slice(0, 5) : null);
 const timer = (t: string | null) =>
   t ? Number(t.slice(0, 2)) + Number(t.slice(3, 5)) / 60 : null;
 
+// Rutefarge → { solid: strek/aksent, soft: lys bakgrunn (10% alpha) }.
+const stolpeFarge = (hex: string | null) => {
+  const c = hex ?? STANDARD_FARGE;
+  return { solid: c, soft: c + "1A" };
+};
+
 const GRID_KOLONNER = "180px repeat(7, minmax(0, 1fr))";
 const LANE_H = 38; // høyde pr. rute-stolpe
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -54,7 +66,7 @@ export default async function RutemasterPage() {
     supabase
       .from("route")
       .select(
-        "id, name, route_number, customer_id, vehicle_id, has_co_driver, start_time, end_time, distance_km, weekdays, revenue_per_hour, active",
+        "id, name, route_number, customer_id, route_type, color, vehicle_category, has_co_driver, vehicles_needed, vehicle_ids, start_time, end_time, distance_km, weekdays, revenue_per_hour, active",
       )
       .order("created_at", { ascending: false }),
     supabase.from("customer").select("id, name").order("name"),
@@ -71,23 +83,22 @@ export default async function RutemasterPage() {
   const kundeNavn = new Map(
     (kunderRes.data ?? []).map((k) => [k.id, k.name as string]),
   );
-  const bilNavn = new Map(
-    biler.map((b) => [b.id, `${b.reg_number} (${b.make} ${b.model})`]),
-  );
+  const regById = new Map(biler.map((b) => [b.id, b.reg_number as string]));
 
-  const farger = kundeFarger((kunderRes.data ?? []).map((k) => k.id));
-  const fargeFor = (kundeId: string | null | undefined): Farge =>
-    (kundeId && farger.get(kundeId)) || NOYTRAL;
+  const bilerAv = (r: Route) => r.vehicle_ids ?? [];
 
-  // ---------- Rutene pr. bil + ukedag ----------
+  // ---------- Rutene pr. bil + ukedag (én rute kan ligge under flere biler) ----------
   const perBilDag = new Map<string, Route[]>();
   let harUtenBil = false;
   for (const r of aktiveRuter) {
-    const bilNokkel = r.vehicle_id ?? "UTEN";
-    if (!r.vehicle_id) harUtenBil = true;
-    for (const dag of r.weekdays ?? []) {
-      const k = `${bilNokkel}|${dag}`;
-      (perBilDag.get(k) ?? perBilDag.set(k, []).get(k)!).push(r);
+    const tildelte = bilerAv(r);
+    const nokler = tildelte.length > 0 ? tildelte : ["UTEN"];
+    if (tildelte.length === 0) harUtenBil = true;
+    for (const bilNokkel of nokler) {
+      for (const dag of r.weekdays ?? []) {
+        const k = `${bilNokkel}|${dag}`;
+        (perBilDag.get(k) ?? perBilDag.set(k, []).get(k)!).push(r);
+      }
     }
   }
 
@@ -119,23 +130,33 @@ export default async function RutemasterPage() {
     backgroundImage: `repeating-linear-gradient(to right, #F0EFEC 0, #F0EFEC 1px, transparent 1px, transparent ${timePct}%)`,
   };
 
-  // Kunder som har aktive ruter (til fargeforklaring).
-  const kunderIVisning = new Map<string, string>();
-  for (const r of aktiveRuter) {
-    if (r.customer_id && kundeNavn.has(r.customer_id)) {
-      kunderIVisning.set(r.customer_id, kundeNavn.get(r.customer_id)!);
-    }
-  }
-
-  // Valg til skjemaet.
-  const kundeValg = (kunderRes.data ?? []).map((k) => ({
+  // ---------- Valg + data til skjemaet ----------
+  const kundeValg: Valg[] = (kunderRes.data ?? []).map((k) => ({
     id: k.id,
     navn: k.name as string,
   }));
-  const bilValg = biler.map((b) => ({
+  const bilValg: Valg[] = biler.map((b) => ({
     id: b.id,
     navn: `${b.reg_number} – ${b.make} ${b.model}`,
   }));
+
+  const tilRuteData = (r: Route): RuteData => ({
+    id: r.id,
+    name: r.name,
+    route_number: r.route_number,
+    customer_id: r.customer_id,
+    route_type: r.route_type,
+    color: r.color,
+    vehicle_category: r.vehicle_category,
+    has_co_driver: r.has_co_driver,
+    vehicles_needed: r.vehicles_needed,
+    vehicle_ids: r.vehicle_ids ?? [],
+    start_time: r.start_time,
+    end_time: r.end_time,
+    distance_km: r.distance_km,
+    weekdays: r.weekdays,
+    revenue_per_hour: r.revenue_per_hour,
+  });
 
   return (
     <div className="px-[38px] py-[30px]">
@@ -155,8 +176,8 @@ export default async function RutemasterPage() {
             Rutemaster
           </h1>
           <p className="mt-1 text-[13px]" style={{ color: "var(--text-tertiary)" }}>
-            Standard-uke. Vaktene lages automatisk 7 dager frem og vises i
-            dagsoversikten.
+            Standard-uke. Én rute kan ha flere biler – det lages én vakt pr. bil
+            pr. dag i dagsoversikten.
           </p>
         </div>
         <NyRute kunder={kundeValg} biler={bilValg} />
@@ -171,24 +192,9 @@ export default async function RutemasterPage() {
         </p>
       )}
 
-      {/* ---------- Fargeforklaring (kunder) ---------- */}
-      {kunderIVisning.size > 0 && (
-        <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2">
-          {[...kunderIVisning.entries()].map(([id, navn]) => (
-            <span key={id} className="flex items-center gap-1.5 text-[12.5px]">
-              <span
-                className="inline-block h-2.5 w-2.5 rounded-full"
-                style={{ backgroundColor: fargeFor(id).solid }}
-              />
-              {navn}
-            </span>
-          ))}
-        </div>
-      )}
-
       {/* ---------- Ukesmal med tidslinje ---------- */}
       <div
-        className="mt-4 overflow-x-auto rounded-2xl shadow-sm"
+        className="mt-5 overflow-x-auto rounded-2xl shadow-sm"
         style={{ backgroundColor: "var(--surface)", border: "1px solid var(--border)" }}
       >
         <div style={{ minWidth: 1040 }}>
@@ -276,7 +282,7 @@ export default async function RutemasterPage() {
                       }}
                     >
                       {celleRuter.map((r, i) => {
-                        const f = fargeFor(r.customer_id);
+                        const f = stolpeFarge(r.color);
                         const kundeTekst = r.customer_id
                           ? kundeNavn.get(r.customer_id) ?? "—"
                           : "—";
@@ -309,7 +315,7 @@ export default async function RutemasterPage() {
                               backgroundColor: f.soft,
                               borderLeft: `3px solid ${f.solid}`,
                             }}
-                            title={`${r.route_number ? r.route_number + " · " : ""}${kundeTekst}${tidTekst ? " · " + tidTekst : ""}${r.has_co_driver ? " · sidemann" : ""}`}
+                            title={`${r.route_number ? r.route_number + " · " : ""}${kundeTekst}${tidTekst ? " · " + tidTekst : ""}${r.has_co_driver ? " · dobbel" : ""}`}
                           >
                             <div className="flex items-baseline gap-1">
                               {r.route_number && (
@@ -323,13 +329,18 @@ export default async function RutemasterPage() {
                               <span className="truncate text-[11.5px] font-medium">
                                 {kundeTekst}
                               </span>
+                              <span
+                                className="ml-auto shrink-0 text-[10px] font-semibold"
+                                style={{ color: f.solid }}
+                              >
+                                {r.has_co_driver ? "2x" : "1x"}
+                              </span>
                             </div>
                             <div
                               className="truncate text-[10.5px]"
                               style={{ color: "var(--text-tertiary)" }}
                             >
                               {tidTekst}
-                              {r.has_co_driver ? " · +1" : ""}
                             </div>
                           </div>
                         );
@@ -344,10 +355,12 @@ export default async function RutemasterPage() {
       </div>
 
       {/* ---------- Alle ruter (tabell for redigering/oversikt) ---------- */}
-      <h2 className="mt-8 text-lg font-medium tracking-tight">Alle ruter</h2>
+      <h2 className="mt-8 text-lg font-medium tracking-tight">
+        Rutemaster ({ruter.length})
+      </h2>
 
       <div
-        className="mt-3 overflow-hidden rounded-2xl shadow-sm"
+        className="mt-3 overflow-x-auto rounded-2xl shadow-sm"
         style={{ backgroundColor: "var(--surface)" }}
       >
         {ruter.length === 0 ? (
@@ -364,12 +377,17 @@ export default async function RutemasterPage() {
                 className="text-[12px] uppercase tracking-wide"
                 style={{ color: "var(--text-tertiary)", backgroundColor: "#FBFBFA" }}
               >
-                <th className="px-4 py-3 font-semibold">Rute</th>
                 <th className="px-4 py-3 font-semibold">Kunde</th>
-                <th className="px-4 py-3 font-semibold">Bil</th>
-                <th className="px-4 py-3 font-semibold">Sidemann</th>
+                <th className="px-4 py-3 font-semibold">Type</th>
+                <th className="px-4 py-3 font-semibold">Bemanning</th>
+                <th className="px-4 py-3 font-semibold">Bil(er)</th>
                 <th className="px-4 py-3 font-semibold">Tid</th>
                 <th className="px-4 py-3 font-semibold">Dager</th>
+                <th className="px-4 py-3 font-semibold">KM</th>
+                <th className="px-4 py-3 font-semibold">KR/T</th>
+                <th className="px-4 py-3 font-semibold">Kategori</th>
+                <th className="px-4 py-3 font-semibold">Ruter</th>
+                <th className="px-4 py-3 font-semibold"></th>
               </tr>
             </thead>
             <tbody>
@@ -382,6 +400,12 @@ export default async function RutemasterPage() {
                   .map((d) => DAG_KORT[d])
                   .filter(Boolean)
                   .join(", ");
+                const tildelte = r.vehicle_ids ?? [];
+                const bilTekst =
+                  tildelte.length > 0
+                    ? tildelte.map((id) => regById.get(id) ?? "?").join(", ")
+                    : "–";
+                const nok = tildelte.length >= r.vehicles_needed;
                 return (
                   <tr
                     key={r.id}
@@ -389,30 +413,34 @@ export default async function RutemasterPage() {
                     style={{ borderColor: "var(--border)" }}
                   >
                     <td className="px-4 py-3">
-                      <div className="font-medium">{r.name}</div>
-                      {r.route_number && (
-                        <div
-                          className="text-[12.5px]"
-                          style={{ color: "var(--text-tertiary)" }}
-                        >
-                          Nr. {r.route_number}
-                        </div>
-                      )}
+                      <div className="font-medium">
+                        {r.customer_id ? kundeNavn.get(r.customer_id) ?? "–" : "–"}
+                      </div>
+                      <div
+                        className="text-[12.5px]"
+                        style={{ color: "var(--text-tertiary)" }}
+                      >
+                        {r.name}
+                        {r.route_number ? ` · ${r.route_number}` : ""}
+                      </div>
                     </td>
                     <td className="px-4 py-3">
-                      {r.customer_id ? kundeNavn.get(r.customer_id) ?? "–" : "–"}
+                      <span
+                        className="inline-block rounded-full px-2.5 py-1 text-[12.5px] font-medium text-white"
+                        style={{ backgroundColor: r.color ?? STANDARD_FARGE }}
+                      >
+                        {typeLabel(r.route_type)}
+                      </span>
                     </td>
+                    <td className="px-4 py-3">{bemanningLabel(r.has_co_driver)}</td>
                     <td className="px-4 py-3">
-                      {r.vehicle_id ? bilNavn.get(r.vehicle_id) ?? "–" : "–"}
+                      <span style={{ fontFamily: "var(--font-dm-mono)" }}>{bilTekst}</span>
                     </td>
-                    <td className="px-4 py-3">{r.has_co_driver ? "Ja" : "Nei"}</td>
                     <td className="px-4 py-3">
                       <span style={{ fontFamily: "var(--font-dm-mono)" }}>{tid}</span>
                     </td>
                     <td className="px-4 py-3">
-                      {dager || (
-                        <span style={{ color: "var(--text-tertiary)" }}>–</span>
-                      )}
+                      {dager || <span style={{ color: "var(--text-tertiary)" }}>–</span>}
                       {!r.active && (
                         <span
                           className="ml-2 rounded-full px-2 py-0.5 text-[11px]"
@@ -421,6 +449,28 @@ export default async function RutemasterPage() {
                           inaktiv
                         </span>
                       )}
+                    </td>
+                    <td className="px-4 py-3">{r.distance_km ?? "–"}</td>
+                    <td className="px-4 py-3">{r.revenue_per_hour ?? "–"}</td>
+                    <td className="px-4 py-3">{kategoriLabel(r.vehicle_category)}</td>
+                    <td className="px-4 py-3">
+                      <span
+                        className="inline-block rounded-full px-2.5 py-1 text-[12.5px] font-semibold"
+                        style={
+                          nok
+                            ? { backgroundColor: "#e5f1e9", color: "#00643a" }
+                            : { backgroundColor: "#FCE5E2", color: "#c7261b" }
+                        }
+                      >
+                        {tildelte.length}/{r.vehicles_needed}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <RuteHandlinger
+                        rute={tilRuteData(r)}
+                        kunder={kundeValg}
+                        biler={bilValg}
+                      />
                     </td>
                   </tr>
                 );
