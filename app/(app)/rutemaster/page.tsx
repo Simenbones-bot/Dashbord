@@ -49,6 +49,36 @@ const kl = (t: string | null) => (t ? t.slice(0, 5) : null);
 const timer = (t: string | null) =>
   t ? Number(t.slice(0, 2)) + Number(t.slice(3, 5)) / 60 : null;
 
+// Start/slutt i desimaltimer, brukt til lane-pakking nedenfor.
+// Uten starttid regnes ruten som hele døgnet (0–24); uten sluttid 1 time.
+const startDec = (r: Route) => timer(r.start_time) ?? 0;
+const endDec = (r: Route) => {
+  const s = timer(r.start_time);
+  const e = timer(r.end_time);
+  if (s != null && e != null && e > s) return e;
+  if (s != null) return s + 1;
+  return 24;
+};
+
+// Greedy lane-pakking: ruter som IKKE overlapper i tid får dele samme linje.
+// Sorterer på starttid og legger hver rute i den første ledige linja (der forrige
+// rute er ferdig før denne starter). Returnerer hvilken linje hver rute havner på.
+function pakkLaner(ruter: Route[]): { rute: Route; lane: number }[] {
+  const sortert = [...ruter].sort((a, b) => startDec(a) - startDec(b));
+  const laneSlutt: number[] = []; // sluttid (desimaltime) for siste rute i hver linje
+  return sortert.map((rute) => {
+    const s = startDec(rute);
+    let lane = laneSlutt.findIndex((slutt) => s >= slutt);
+    if (lane === -1) {
+      lane = laneSlutt.length;
+      laneSlutt.push(endDec(rute));
+    } else {
+      laneSlutt[lane] = endDec(rute);
+    }
+    return { rute, lane };
+  });
+}
+
 // Rutefarge → { solid: strek/aksent, soft: lys bakgrunn (10% alpha) }.
 const stolpeFarge = (hex: string | null) => {
   const c = hex ?? STANDARD_FARGE;
@@ -269,7 +299,13 @@ export default async function RutemasterPage() {
                 {/* Dagceller med tidslinje */}
                 {UKEDAGER.map((u) => {
                   const celleRuter = perBilDag.get(`${rad.id}|${u.nr}`) ?? [];
-                  const hoyde = Math.max(celleRuter.length, 1) * (LANE_H + 4) + 4;
+                  // Pakk ruter som ikke overlapper i tid sammen på samme linje.
+                  const pakket = pakkLaner(celleRuter);
+                  const antallLaner = pakket.reduce(
+                    (m, p) => Math.max(m, p.lane + 1),
+                    0,
+                  );
+                  const hoyde = Math.max(antallLaner, 1) * (LANE_H + 4) + 4;
                   return (
                     <div
                       key={u.nr}
@@ -281,7 +317,7 @@ export default async function RutemasterPage() {
                         ...(u.nr >= 6 ? { backgroundColor: "#FBFBFA" } : {}),
                       }}
                     >
-                      {celleRuter.map((r, i) => {
+                      {pakket.map(({ rute: r, lane }) => {
                         const f = stolpeFarge(r.color);
                         const kundeTekst = r.customer_id
                           ? kundeNavn.get(r.customer_id) ?? "—"
@@ -308,7 +344,7 @@ export default async function RutemasterPage() {
                             key={r.id}
                             className="absolute overflow-hidden rounded-[7px] px-2 py-1"
                             style={{
-                              top: 4 + i * (LANE_H + 4),
+                              top: 4 + lane * (LANE_H + 4),
                               left: `${left}%`,
                               width: `${width}%`,
                               height: LANE_H,
