@@ -173,20 +173,10 @@ export default function NyRute({
 
               <div className="grid grid-cols-2 gap-3">
                 <Felt label="Starttid">
-                  <input
-                    name="start_time"
-                    type="time"
-                    className="w-full px-3 py-2.5 text-[15px] outline-none"
-                    style={inputStil}
-                  />
+                  <TidVelger navn="start_time" />
                 </Felt>
                 <Felt label="Sluttid">
-                  <input
-                    name="end_time"
-                    type="time"
-                    className="w-full px-3 py-2.5 text-[15px] outline-none"
-                    style={inputStil}
-                  />
+                  <TidVelger navn="end_time" />
                 </Felt>
               </div>
 
@@ -268,6 +258,59 @@ export default function NyRute({
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Tidsvelger i 24-timers format (TT:MM) – to nedtrekk, alltid militærtid
+ * (aldri AM/PM uansett nettleser). Sender "HH:MM" til server-action-en, eller
+ * tom verdi hvis timen ikke er valgt (start/slutt er valgfritt).
+ */
+function TidVelger({ navn }: { navn: string }) {
+  const [time, setTime] = useState("");
+  const [minutt, setMinutt] = useState("");
+  const verdi = time === "" ? "" : `${time}:${minutt || "00"}`;
+
+  const timer = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0"));
+  const minutter = ["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"];
+
+  const selectStil: React.CSSProperties = { ...inputStil };
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <select
+        aria-label="Time"
+        value={time}
+        onChange={(e) => setTime(e.target.value)}
+        className="w-full bg-white px-2 py-2.5 text-[15px] outline-none"
+        style={selectStil}
+      >
+        <option value="">TT</option>
+        {timer.map((t) => (
+          <option key={t} value={t}>
+            {t}
+          </option>
+        ))}
+      </select>
+      <span className="text-[15px]" style={{ color: "var(--text-tertiary)" }}>
+        :
+      </span>
+      <select
+        aria-label="Minutt"
+        value={minutt}
+        onChange={(e) => setMinutt(e.target.value)}
+        className="w-full bg-white px-2 py-2.5 text-[15px] outline-none"
+        style={selectStil}
+      >
+        <option value="">MM</option>
+        {minutter.map((m) => (
+          <option key={m} value={m}>
+            {m}
+          </option>
+        ))}
+      </select>
+      <input type="hidden" name={navn} value={verdi} />
+    </div>
   );
 }
 

@@ -281,23 +281,10 @@ export default async function DagsoversiktPage({
     a.tittel.localeCompare(b.tittel, "nb"),
   );
 
-  // ---------- Tidsskala ----------
-  let minH = 24;
-  let maxH = 0;
-  for (const s of skift) {
-    if (s.planned_start) minH = Math.min(minH, Math.floor(osloTime(s.planned_start)));
-    if (s.planned_end) maxH = Math.max(maxH, Math.ceil(osloTime(s.planned_end)));
-  }
-  if (minH > maxH) {
-    minH = 6;
-    maxH = 18; // fallback når ingen tider finnes
-  }
-  // Sørg for at "nå" er synlig når vi ser på i dag.
-  if (erIDag) {
-    minH = Math.min(minH, Math.floor(osloTime(now)));
-    maxH = Math.max(maxH, Math.ceil(osloTime(now)));
-  }
-  const totalT = Math.max(maxH - minH, 1);
+  // ---------- Tidsskala (hele døgnet) ----------
+  const minH = 0;
+  const maxH = 24;
+  const totalT = maxH - minH; // 24 timer
   const timePct = 100 / totalT;
 
   const steg = totalT > 14 ? 2 : 1;

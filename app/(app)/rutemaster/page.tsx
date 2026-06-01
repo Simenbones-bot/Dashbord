@@ -102,22 +102,15 @@ export default async function RutemasterPage() {
     rader.push({ id: "UTEN", tittel: "Uten bil", undertittel: "Ikke tildelt" });
   }
 
-  // ---------- Tidsskala (arbeidsvindu) ----------
-  let minStart = 24;
-  let maxSlutt = 0;
-  for (const r of aktiveRuter) {
-    if (r.start_time) minStart = Math.min(minStart, Math.floor(timer(r.start_time)!));
-    if (r.end_time) maxSlutt = Math.max(maxSlutt, Math.ceil(timer(r.end_time)!));
-  }
-  // Fall tilbake til hele døgnet hvis vi ikke har tider.
-  const skalaStart = minStart <= maxSlutt ? minStart : 0;
-  const skalaSlutt = minStart <= maxSlutt ? maxSlutt : 24;
-  const totalT = Math.max(skalaSlutt - skalaStart, 1);
+  // ---------- Tidsskala (hele døgnet) ----------
+  const skalaStart = 0;
+  const skalaSlutt = 24;
+  const totalT = skalaSlutt - skalaStart; // 24 timer
   const timePct = 100 / totalT;
   const skalaTekst = `${pad(skalaStart)}–${pad(skalaSlutt)}`;
 
-  // Timemerker langs toppen (hver 1. time hvis kort vindu, ellers hver 2.).
-  const steg = totalT > 10 ? 2 : 1;
+  // Timemerker langs toppen (hver 2. time over hele døgnet).
+  const steg = 2;
   const timeMerker: number[] = [];
   for (let h = skalaStart; h <= skalaSlutt; h += steg) timeMerker.push(h);
 
