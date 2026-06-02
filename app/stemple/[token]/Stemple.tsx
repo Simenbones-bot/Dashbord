@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { stempleInn, stempleUt } from "./actions";
+import Kamera, { type TattBilde } from "./Kamera";
 
 export type Valg = { id: string; navn: string };
 
@@ -16,6 +17,8 @@ export type ShiftKort = {
   sjaforId: string | null;
   sjaforNavn: string | null;
   kommentar: string | null;
+  sjekkStatus: "ok" | "avvik" | null;
+  antallBilder: number;
 };
 
 type Status = "ikke" | "inne" | "ferdig";
@@ -43,25 +46,48 @@ export default function Stemple({
   const [valgt, setValgt] = useState<ShiftKort | null>(null);
   const [sjafor, setSjafor] = useState("");
   const [kommentar, setKommentar] = useState("");
+  const [sjekk, setSjekk] = useState<"ok" | "avvik">("ok");
+  const [bilder, setBilder] = useState<TattBilde[]>([]);
   const [laster, setLaster] = useState(false);
   const [feil, setFeil] = useState<string | null>(null);
 
+  // Frigjor miniatyrbildenes minne nar dialogen lukkes/byttes.
+  function ryddBilder() {
+    bilder.forEach((b) => URL.revokeObjectURL(b.url));
+    setBilder([]);
+  }
+
   function apne(k: ShiftKort) {
+    ryddBilder();
     setValgt(k);
     setSjafor(k.sjaforId ?? "");
     setKommentar(k.kommentar ?? "");
+    setSjekk("ok");
     setFeil(null);
   }
   function lukk() {
+    ryddBilder();
     setValgt(null);
     setFeil(null);
   }
 
   async function inn() {
     if (!valgt) return;
+    if (sjekk === "avvik" && kommentar.trim() === "") {
+      return setFeil("Beskriv avviket i kommentarfeltet.");
+    }
     setLaster(true);
     setFeil(null);
-    const res = await stempleInn(token, valgt.id, sjafor, kommentar);
+
+    const fd = new FormData();
+    fd.set("token", token);
+    fd.set("shiftId", valgt.id);
+    fd.set("driverId", sjafor);
+    fd.set("comment", kommentar);
+    fd.set("sjekkStatus", sjekk);
+    bilder.forEach((b, i) => fd.append("bilder", b.blob, `bilde-${i + 1}.jpg`));
+
+    const res = await stempleInn(fd);
     setLaster(false);
     if (!res.ok) return setFeil(res.feil);
     lukk();
@@ -134,7 +160,7 @@ export default function Stemple({
             onClick={lukk}
           />
           <div
-            className="relative w-full max-w-[480px] rounded-t-2xl p-6 shadow-xl sm:rounded-2xl"
+            className="relative max-h-[92vh] w-full max-w-[480px] overflow-y-auto rounded-t-2xl p-6 shadow-xl sm:rounded-2xl"
             style={{ backgroundColor: "var(--surface)" }}
           >
             <div className="mb-4 flex items-start justify-between gap-3">
@@ -165,6 +191,7 @@ export default function Stemple({
                   <strong>{valgt.sjaforNavn ?? "Sjåfør"}</strong> stemplet{" "}
                   {valgt.innTid}–{valgt.utTid}.
                 </p>
+                <BilsjekkOppsummering k={valgt} />
                 {valgt.kommentar && (
                   <p className="mt-2" style={{ color: "var(--text-secondary)" }}>
                     «{valgt.kommentar}»
@@ -174,32 +201,67 @@ export default function Stemple({
             ) : (
               <div className="space-y-4">
                 {status === "inne" ? (
-                  <p className="text-[14px]">
-                    Inne siden <strong>{valgt.innTid}</strong>
-                    {valgt.sjaforNavn ? ` (${valgt.sjaforNavn})` : ""}.
-                  </p>
-                ) : (
-                  <label className="block">
-                    <span className="mb-1.5 block text-sm font-medium">Sjåfør</span>
-                    <select
-                      value={sjafor}
-                      onChange={(e) => setSjafor(e.target.value)}
-                      className="w-full bg-white px-3 py-3 text-[16px] outline-none"
-                      style={inputStil}
+                  <>
+                    <p className="text-[14px]">
+                      Inne siden <strong>{valgt.innTid}</strong>
+                      {valgt.sjaforNavn ? ` (${valgt.sjaforNavn})` : ""}.
+                    </p>
+                    <div
+                      className="rounded-[10px] p-3 text-[13px]"
+                      style={{ backgroundColor: "var(--background)" }}
                     >
-                      <option value="">Velg sjåfør …</option>
-                      {sjaforer.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.navn}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                      <BilsjekkOppsummering k={valgt} />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <label className="block">
+                      <span className="mb-1.5 block text-sm font-medium">Sjåfør</span>
+                      <select
+                        value={sjafor}
+                        onChange={(e) => setSjafor(e.target.value)}
+                        className="w-full bg-white px-3 py-3 text-[16px] outline-none"
+                        style={inputStil}
+                      >
+                        <option value="">Velg sjåfør …</option>
+                        {sjaforer.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.navn}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <div>
+                      <span className="mb-1.5 block text-sm font-medium">Bilsjekk</span>
+                      <div className="flex gap-2">
+                        <SjekkKnapp
+                          aktiv={sjekk === "ok"}
+                          onClick={() => setSjekk("ok")}
+                          farge="var(--bring-green)"
+                        >
+                          OK
+                        </SjekkKnapp>
+                        <SjekkKnapp
+                          aktiv={sjekk === "avvik"}
+                          onClick={() => setSjekk("avvik")}
+                          farge="#7A1410"
+                        >
+                          Avvik
+                        </SjekkKnapp>
+                      </div>
+                    </div>
+
+                    <Kamera bilder={bilder} onEndret={setBilder} />
+                  </>
                 )}
 
                 <label className="block">
                   <span className="mb-1.5 block text-sm font-medium">
-                    Kommentar / avvik (valgfritt)
+                    {status === "ikke"
+                      ? "Kommentar / avvik" +
+                        (sjekk === "avvik" ? "" : " (valgfritt)")
+                      : "Kommentar / avvik (valgfritt)"}
                   </span>
                   <textarea
                     value={kommentar}
@@ -247,6 +309,50 @@ export default function Stemple({
         </div>
       )}
     </>
+  );
+}
+
+function SjekkKnapp({
+  aktiv,
+  onClick,
+  farge,
+  children,
+}: {
+  aktiv: boolean;
+  onClick: () => void;
+  farge: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="h-11 flex-1 rounded-[10px] text-[15px] font-semibold"
+      style={
+        aktiv
+          ? { backgroundColor: farge, color: "#fff" }
+          : { border: "1.5px solid var(--border-input)", color: "var(--text-secondary)" }
+      }
+    >
+      {children}
+    </button>
+  );
+}
+
+function BilsjekkOppsummering({ k }: { k: ShiftKort }) {
+  if (k.sjekkStatus === null) return null;
+  const bilder =
+    k.antallBilder > 0
+      ? ` · ${k.antallBilder} bilde${k.antallBilder === 1 ? "" : "r"}`
+      : " · ingen bilder";
+  return (
+    <p className="mt-2 text-[13px]">
+      Bilsjekk:{" "}
+      <strong style={{ color: k.sjekkStatus === "avvik" ? "#7A1410" : "var(--bring-green-mid)" }}>
+        {k.sjekkStatus === "avvik" ? "Avvik" : "OK"}
+      </strong>
+      {bilder}
+    </p>
   );
 }
 
