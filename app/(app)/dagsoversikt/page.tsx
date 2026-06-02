@@ -42,6 +42,7 @@ type Shift = {
   status: string;
   date: string;
   driver_id: string | null;
+  route_id: string | null;
   route: Rel<{ name: string; route_number: string | null }>;
   vehicle: Rel<VehicleInfo>;
   planned_driver: Rel<DriverInfo>;
@@ -185,7 +186,7 @@ export default async function DagsoversiktPage({
     supabase
       .from("shift")
       .select(
-        `id, planned_start, planned_end, has_co_driver, status, date, driver_id,
+        `id, planned_start, planned_end, has_co_driver, status, date, driver_id, route_id,
          route:route_id (name, route_number),
          vehicle:vehicle_id (id, reg_number, make, model),
          planned_driver:driver_id (full_name),
@@ -214,6 +215,21 @@ export default async function DagsoversiktPage({
     id: s.id,
     navn: s.full_name as string,
   }));
+
+  // Fast sjåfør pr. rute (for ★-markering). Egen, feiltolerant spørring slik at
+  // dagsoversikten fortsatt virker dersom kolonnen default_driver_id ennå ikke
+  // er lagt til (migrasjon 0012 ikke kjørt i Supabase).
+  const ruteIder = [...new Set(skift.map((s) => s.route_id).filter(Boolean))] as string[];
+  const fastSjaforForRute = new Map<string, string | null>();
+  if (ruteIder.length > 0) {
+    const { data: ruteData } = await supabase
+      .from("route")
+      .select("id, default_driver_id")
+      .in("id", ruteIder);
+    for (const r of ruteData ?? []) {
+      fastSjaforForRute.set(r.id as string, (r.default_driver_id as string | null) ?? null);
+    }
+  }
 
   // Forhåndsberegn status for hver vakt.
   const statusFor = new Map<string, Status>();
@@ -642,6 +658,11 @@ export default async function DagsoversiktPage({
                               navn={sjafor}
                               sjaforer={sjaforValg}
                               accent={cfg.accent}
+                              fastDriverId={
+                                s.route_id
+                                  ? fastSjaforForRute.get(s.route_id) ?? null
+                                  : null
+                              }
                             />
                             {vc && (
                               <span

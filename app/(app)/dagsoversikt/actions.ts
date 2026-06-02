@@ -70,3 +70,74 @@ export async function settSjaforPaVakt(
   revalidatePath("/dagsoversikt");
   return { ok: true };
 }
+
+// "YYYY-MM-DD" for i morgen i norsk tid.
+function iMorgenOslo(): string {
+  const idag = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Oslo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  const d = new Date(idag + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Setter en sjåfør FAST på ruten som vakten tilhører.
+ * - Lagrer default_driver_id på ruten, slik at nye vakter som genereres får
+ *   sjåføren automatisk.
+ * - Oppdaterer alle eksisterende vakter på ruten fra og med i morgen til samme
+ *   sjåfør (dagens og tidligere vakter røres ikke).
+ */
+export async function settFastSjaforPaRute(
+  shiftId: string,
+  driverId: string,
+): Promise<SjaforResultat> {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, feil: "Du er ikke innlogget." };
+
+  const driver = driverId.trim();
+  if (driver === "") return { ok: false, feil: "Velg en sjåfør først." };
+
+  // Finn vakten + ruten den hører til.
+  const { data: vakt } = await supabase
+    .from("shift")
+    .select("route_id, unit_id")
+    .eq("id", shiftId)
+    .maybeSingle();
+  if (!vakt) return { ok: false, feil: "Fant ikke vakten." };
+
+  // Sjåføren må høre til samme enhet som vakten.
+  const { data: d } = await supabase
+    .from("driver")
+    .select("unit_id")
+    .eq("id", driver)
+    .maybeSingle();
+  if (!d || d.unit_id !== vakt.unit_id) {
+    return { ok: false, feil: "Sjåføren hører ikke til samme enhet som vakten." };
+  }
+
+  // 1) Fast sjåfør på ruten (brukes av vaktgenereringen for nye vakter).
+  const { error: e1 } = await supabase
+    .from("route")
+    .update({ default_driver_id: driver })
+    .eq("id", vakt.route_id);
+  if (e1) return { ok: false, feil: e1.message };
+
+  // 2) Oppdater alle fremtidige vakter (fra og med i morgen) på ruten.
+  const { error: e2 } = await supabase
+    .from("shift")
+    .update({ driver_id: driver })
+    .eq("route_id", vakt.route_id)
+    .gte("date", iMorgenOslo());
+  if (e2) return { ok: false, feil: e2.message };
+
+  revalidatePath("/dagsoversikt");
+  return { ok: true };
+}
