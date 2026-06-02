@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import { settSjaforPaVakt, settFastSjaforPaRute } from "./actions";
+import { settSjaforPaVakt, settFastSjaforPaRute, type SjaforFelt } from "./actions";
 
 export type SjaforValg = { id: string; navn: string };
 
@@ -28,6 +28,9 @@ export default function SjaforVelger({
   sjaforer,
   accent,
   fastDriverId,
+  felt = "driver_id",
+  etikett,
+  placeholder = "Velg sjåfør …",
 }: {
   shiftId: string;
   valgtId: string;
@@ -35,6 +38,9 @@ export default function SjaforVelger({
   sjaforer: SjaforValg[];
   accent: string;
   fastDriverId: string | null;
+  felt?: SjaforFelt;
+  etikett?: string;
+  placeholder?: string;
 }) {
   const router = useRouter();
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -83,7 +89,7 @@ export default function SjaforVelger({
     const forrige = verdi;
     setVerdi(id);
     setLaster(true);
-    const res = await settSjaforPaVakt(shiftId, id);
+    const res = await settSjaforPaVakt(shiftId, id, felt);
     setLaster(false);
     if (!res.ok) {
       setVerdi(forrige); // rull tilbake ved feil
@@ -96,7 +102,7 @@ export default function SjaforVelger({
   async function settFast(id: string) {
     setApen(false);
     setLaster(true);
-    const res = await settFastSjaforPaRute(shiftId, id);
+    const res = await settFastSjaforPaRute(shiftId, id, felt);
     setLaster(false);
     if (!res.ok) {
       alert(res.feil);
@@ -122,6 +128,14 @@ export default function SjaforVelger({
           maxWidth: "100%",
         }}
       >
+        {etikett && (
+          <span
+            className="shrink-0 text-[9px] font-semibold uppercase"
+            style={{ color: "var(--text-tertiary)" }}
+          >
+            {etikett}
+          </span>
+        )}
         {valgtNavn && (
           <span
             className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[8px] font-semibold text-white"
@@ -130,7 +144,7 @@ export default function SjaforVelger({
             {initialer(valgtNavn)}
           </span>
         )}
-        <span className="min-w-0 truncate">{valgtNavn ?? "Velg sjåfør …"}</span>
+        <span className="min-w-0 truncate">{valgtNavn ?? placeholder}</span>
         {erFast && (
           <span className="shrink-0" style={{ color: accent }} title="Fast sjåfør på ruten">
             ★

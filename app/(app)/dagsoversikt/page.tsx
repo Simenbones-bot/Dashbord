@@ -42,10 +42,12 @@ type Shift = {
   status: string;
   date: string;
   driver_id: string | null;
+  co_driver_id: string | null;
   route_id: string | null;
   route: Rel<{ name: string; route_number: string | null }>;
   vehicle: Rel<VehicleInfo>;
   planned_driver: Rel<DriverInfo>;
+  planned_co_driver: Rel<DriverInfo>;
   time_entry: Rel<TimeEntry>;
   vehicle_check: Rel<{ status: string; comment: string | null }>;
 };
@@ -157,7 +159,10 @@ function beregnStatus(shift: Shift, now: Date): Status {
 // ---------- Tidslinje-mål ----------
 
 const RAD_LABEL = 200; // bredde på bil-kolonnen (px)
-const LANE_H = 78; // høyde pr. stolpe-spor (px)
+const LANE_H = 78; // høyde for en vanlig vakt-boks (px)
+const LANE_H_CO = 102; // høyere boks når vakten har sidemann (to nedtrekk)
+const LANE_GAP = 6; // luft mellom spor (px)
+const boksHoyde = (harSidemann: boolean) => (harSidemann ? LANE_H_CO : LANE_H);
 
 // ---------- Side ----------
 
@@ -186,10 +191,11 @@ export default async function DagsoversiktPage({
     supabase
       .from("shift")
       .select(
-        `id, planned_start, planned_end, has_co_driver, status, date, driver_id, route_id,
+        `id, planned_start, planned_end, has_co_driver, status, date, driver_id, co_driver_id, route_id,
          route:route_id (name, route_number),
          vehicle:vehicle_id (id, reg_number, make, model),
          planned_driver:driver_id (full_name),
+         planned_co_driver:co_driver_id (full_name),
          time_entry (check_in, check_out, comment, driver_id, driver:driver_id (full_name)),
          vehicle_check (status, comment)`,
       )
@@ -221,13 +227,18 @@ export default async function DagsoversiktPage({
   // er lagt til (migrasjon 0012 ikke kjørt i Supabase).
   const ruteIder = [...new Set(skift.map((s) => s.route_id).filter(Boolean))] as string[];
   const fastSjaforForRute = new Map<string, string | null>();
+  const fastSidemannForRute = new Map<string, string | null>();
   if (ruteIder.length > 0) {
     const { data: ruteData } = await supabase
       .from("route")
-      .select("id, default_driver_id")
+      .select("id, default_driver_id, default_co_driver_id")
       .in("id", ruteIder);
     for (const r of ruteData ?? []) {
       fastSjaforForRute.set(r.id as string, (r.default_driver_id as string | null) ?? null);
+      fastSidemannForRute.set(
+        r.id as string,
+        (r.default_co_driver_id as string | null) ?? null,
+      );
     }
   }
 
@@ -522,7 +533,20 @@ export default async function DagsoversiktPage({
                 }
               }
               const antLanes = Math.max(laneEnd.length, 1);
-              const radHoyde = antLanes * (LANE_H + 6) + 6;
+              // Hvert spor er så høyt som den høyeste boksen i sporet (vakter med
+              // sidemann er høyere). Topp-posisjon = sum av sporene over + luft.
+              const laneHeight: number[] = new Array(antLanes).fill(LANE_H);
+              for (const s of sortert) {
+                const li = lane.get(s.id) ?? 0;
+                laneHeight[li] = Math.max(laneHeight[li], boksHoyde(s.has_co_driver));
+              }
+              const laneTop: number[] = [];
+              let akk = LANE_GAP;
+              for (let i = 0; i < antLanes; i++) {
+                laneTop[i] = akk;
+                akk += laneHeight[i] + LANE_GAP;
+              }
+              const radHoyde = akk;
 
               return (
                 <div
@@ -587,6 +611,8 @@ export default async function DagsoversiktPage({
                         null;
                       // Faktisk (stemplet) sjåfør vinner over planlagt sjåfør.
                       const valgtSjaforId = te?.driver_id ?? s.driver_id ?? "";
+                      const sidemann = forste(s.planned_co_driver)?.full_name ?? null;
+                      const valgtSidemannId = s.co_driver_id ?? "";
                       const kommentar = te?.comment ?? vc?.comment ?? null;
 
                       return (
@@ -594,10 +620,10 @@ export default async function DagsoversiktPage({
                           key={s.id}
                           className="absolute overflow-hidden rounded-[9px] px-2.5 py-2"
                           style={{
-                            top: 6 + (lane.get(s.id) ?? 0) * (LANE_H + 6),
+                            top: laneTop[lane.get(s.id) ?? 0],
                             left: `${left}%`,
                             width: `${width}%`,
-                            height: LANE_H,
+                            height: boksHoyde(s.has_co_driver),
                             backgroundColor: cfg.soft,
                             borderLeft: `3px solid ${cfg.accent}`,
                             border: `1px solid ${cfg.accent}33`,
@@ -650,7 +676,7 @@ export default async function DagsoversiktPage({
                             )}
                           </div>
 
-                          {/* Nederste linje: sjåfør-velger (nedtrekk) + bilsjekk */}
+                          {/* Sjåfør-velger (nedtrekk) + bilsjekk */}
                           <div className="mt-1 flex items-center gap-1.5">
                             <SjaforVelger
                               shiftId={s.id}
@@ -663,6 +689,7 @@ export default async function DagsoversiktPage({
                                   ? fastSjaforForRute.get(s.route_id) ?? null
                                   : null
                               }
+                              felt="driver_id"
                             />
                             {vc && (
                               <span
@@ -677,6 +704,27 @@ export default async function DagsoversiktPage({
                               </span>
                             )}
                           </div>
+
+                          {/* Sidemann-velger – kun når vakten krever to sjåfører */}
+                          {s.has_co_driver && (
+                            <div className="mt-1 flex items-center gap-1.5">
+                              <SjaforVelger
+                                shiftId={s.id}
+                                valgtId={valgtSidemannId}
+                                navn={sidemann}
+                                sjaforer={sjaforValg}
+                                accent={cfg.accent}
+                                fastDriverId={
+                                  s.route_id
+                                    ? fastSidemannForRute.get(s.route_id) ?? null
+                                    : null
+                                }
+                                felt="co_driver_id"
+                                etikett="+1"
+                                placeholder="Velg sidemann …"
+                              />
+                            </div>
+                          )}
                         </div>
                       );
                     })}
