@@ -60,7 +60,7 @@ export default async function StemplePage({
   // Dagens vakter for KUN denne bilen.
   const { data: vakter } = await admin
     .from("shift")
-    .select("id, route_id, planned_start, planned_end, has_co_driver")
+    .select("id, route_id, planned_start, planned_end, has_co_driver, driver_id")
     .eq("vehicle_id", bil.id)
     .eq("date", iDag)
     .order("planned_start", { ascending: true });
@@ -143,6 +143,8 @@ export default async function StemplePage({
       klokke(v.planned_start) || klokke(v.planned_end)
         ? `${klokke(v.planned_start) ?? "?"}–${klokke(v.planned_end) ?? "?"}`
         : "Ingen planlagt tid";
+    // Faktisk stemplet sjåfør vinner; ellers planlagt sjåfør satt i dagsoversikten.
+    const valgtSjaforId = t?.driver_id ?? v.driver_id ?? null;
     return {
       id: v.id,
       tittel: [r?.nummer, kunde ?? r?.navn].filter(Boolean).join(" · ") || "Vakt",
@@ -150,8 +152,8 @@ export default async function StemplePage({
       sidemann: v.has_co_driver,
       innTid: klokke(t?.check_in ?? null),
       utTid: klokke(t?.check_out ?? null),
-      sjaforId: t?.driver_id ?? null,
-      sjaforNavn: t?.driver_id ? sjaforNavn.get(t.driver_id) ?? null : null,
+      sjaforId: valgtSjaforId,
+      sjaforNavn: valgtSjaforId ? sjaforNavn.get(valgtSjaforId) ?? null : null,
       kommentar: t?.comment ?? null,
       sjekkStatus: sjekk?.status ?? null,
       antallBilder: sjekk ? bildeAntall.get(sjekk.id) ?? 0 : 0,
