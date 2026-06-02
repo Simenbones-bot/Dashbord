@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import AutoRefresh from "./AutoRefresh";
+import SjaforVelger, { type SjaforValg } from "./SjaforVelger";
 
 // =============================================================
 // Dagsoversikt (M4) – tidslinje-Gantt for én dag.
@@ -22,6 +23,7 @@ type TimeEntry = {
   check_in: string | null;
   check_out: string | null;
   comment: string | null;
+  driver_id: string | null;
   driver: Rel<DriverInfo>;
 };
 
@@ -39,6 +41,7 @@ type Shift = {
   has_co_driver: boolean;
   status: string;
   date: string;
+  driver_id: string | null;
   route: Rel<{ name: string; route_number: string | null }>;
   vehicle: Rel<VehicleInfo>;
   planned_driver: Rel<DriverInfo>;
@@ -89,12 +92,6 @@ function addDays(dateStr: string, delta: number): string {
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
-
-// Initialer fra navn ("Anders Vik" → "AV").
-function initialer(navn: string): string {
-  const deler = navn.trim().split(/\s+/);
-  return ((deler[0]?.[0] ?? "") + (deler[1]?.[0] ?? "")).toUpperCase() || "?";
-}
 
 // ---------- Fargestatus pr. vakt ----------
 
@@ -184,15 +181,15 @@ export default async function DagsoversiktPage({
   const erIDag = valgtDato === today;
 
   // Hent dagens vakter med alt vi trenger i samme spørring.
-  const [shiftRes, verkstedRes] = await Promise.all([
+  const [shiftRes, verkstedRes, sjaforerRes] = await Promise.all([
     supabase
       .from("shift")
       .select(
-        `id, planned_start, planned_end, has_co_driver, status, date,
+        `id, planned_start, planned_end, has_co_driver, status, date, driver_id,
          route:route_id (name, route_number),
          vehicle:vehicle_id (id, reg_number, make, model),
          planned_driver:driver_id (full_name),
-         time_entry (check_in, check_out, comment, driver:driver_id (full_name)),
+         time_entry (check_in, check_out, comment, driver_id, driver:driver_id (full_name)),
          vehicle_check (status, comment)`,
       )
       .eq("date", valgtDato)
@@ -201,11 +198,22 @@ export default async function DagsoversiktPage({
       .from("vehicle")
       .select("id", { count: "exact", head: true })
       .eq("status", "pa_verksted"),
+    supabase
+      .from("driver")
+      .select("id, full_name")
+      .eq("status", "aktiv")
+      .order("full_name"),
   ]);
 
   const skift = (shiftRes.data ?? []) as unknown as Shift[];
   const error = shiftRes.error;
   const antallVerksted = verkstedRes.count ?? 0;
+
+  // Aktive sjåfører til nedtrekksmenyen (RLS gir bare egne enheter).
+  const sjaforValg: SjaforValg[] = (sjaforerRes.data ?? []).map((s) => ({
+    id: s.id,
+    navn: s.full_name as string,
+  }));
 
   // Forhåndsberegn status for hver vakt.
   const statusFor = new Map<string, Status>();
@@ -561,6 +569,8 @@ export default async function DagsoversiktPage({
                         forste(te?.driver)?.full_name ??
                         forste(s.planned_driver)?.full_name ??
                         null;
+                      // Faktisk (stemplet) sjåfør vinner over planlagt sjåfør.
+                      const valgtSjaforId = te?.driver_id ?? s.driver_id ?? "";
                       const kommentar = te?.comment ?? vc?.comment ?? null;
 
                       return (
@@ -624,23 +634,15 @@ export default async function DagsoversiktPage({
                             )}
                           </div>
 
-                          {/* Nederste linje: sjåfør + status-tekst + bilsjekk */}
+                          {/* Nederste linje: sjåfør-velger (nedtrekk) + bilsjekk */}
                           <div className="mt-1 flex items-center gap-1.5">
-                            {sjafor && (
-                              <span
-                                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-semibold text-white"
-                                style={{ backgroundColor: cfg.accent }}
-                              >
-                                {initialer(sjafor)}
-                              </span>
-                            )}
-                            <span
-                              className="truncate text-[11.5px]"
-                              style={{ color: "var(--text-secondary)" }}
-                            >
-                              {sjafor ? `${sjafor} · ` : ""}
-                              {st.sub}
-                            </span>
+                            <SjaforVelger
+                              shiftId={s.id}
+                              valgtId={valgtSjaforId}
+                              navn={sjafor}
+                              sjaforer={sjaforValg}
+                              accent={cfg.accent}
+                            />
                             {vc && (
                               <span
                                 className="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[9.5px] font-semibold"
